@@ -56,6 +56,52 @@ Client ──→ [Load    ]├──→ Server 2
 | **IP Hash** | Same client IP always goes to the same server | Session affinity without sticky sessions |
 | **Random** | Pick a random server | Simple, surprisingly effective at scale |
 
+**Health check endpoint for load balancer integration:**
+
+Load balancers need to know which backend servers are healthy. Here is a simple health check endpoint that a load balancer can poll:
+
+```rust
+use axum::{routing::get, Json, Router};
+use serde::Serialize;
+use std::time::Instant;
+use tokio::net::TcpListener;
+
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    uptime_secs: u64,
+    version: &'static str,
+}
+
+static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+async fn health_check() -> Json<HealthResponse> {
+    let start = START_TIME.get_or_init(Instant::now);
+    Json(HealthResponse {
+        status: "healthy",
+        uptime_secs: start.elapsed().as_secs(),
+        version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+/// In production, the load balancer hits GET /health every few seconds.
+/// If it returns non-200 (or times out), the server is removed from the pool.
+#[tokio::main]
+async fn main() {
+    START_TIME.get_or_init(Instant::now);
+
+    let app = Router::new()
+        .route("/health", get(health_check))
+        // ... other routes ...
+        ;
+
+    let listener = TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+```
+
+The load balancer periodically sends `GET /health` to each backend. If a server fails to respond (or returns a non-200 status), the load balancer stops routing traffic to it. This is the foundation of automatic failover.
+
 ### Caching Strategies
 
 Caching stores frequently accessed data closer to the consumer, reducing database load and improving response times.
@@ -108,6 +154,89 @@ Writes go to the cache immediately. The cache asynchronously flushes to the data
 | **TTL (Time to Live)** | Cache entries expire after a fixed time | Simple but may serve stale data |
 | **Event-based** | Invalidate when the data changes | Consistent but requires event infrastructure |
 | **Version-based** | Include a version in the cache key | Never stale but requires version tracking |
+
+**In-memory cache with TTL (illustrating the cache-aside pattern):**
+
+The following is a simple thread-safe in-memory cache with per-entry TTL. This is the kind of application-level cache shown in the cache-aside pattern above, useful when you want caching without an external dependency like Redis.
+
+```rust
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// A cache entry storing a value and its expiration time.
+struct CacheEntry<V> {
+    value: V,
+    expires_at: Instant,
+}
+
+/// A simple thread-safe in-memory cache with TTL support.
+/// In production, consider eviction policies (LRU) and memory limits.
+pub struct TtlCache<V: Clone> {
+    entries: Arc<Mutex<HashMap<String, CacheEntry<V>>>>,
+}
+
+impl<V: Clone> TtlCache<V> {
+    pub fn new() -> Self {
+        Self {
+            entries: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Insert a value with a time-to-live duration.
+    pub fn set(&self, key: impl Into<String>, value: V, ttl: Duration) {
+        let mut map = self.entries.lock().unwrap();
+        map.insert(
+            key.into(),
+            CacheEntry {
+                value,
+                expires_at: Instant::now() + ttl,
+            },
+        );
+    }
+
+    /// Get a value if it exists and hasn't expired.
+    /// Expired entries are removed lazily on access.
+    pub fn get(&self, key: &str) -> Option<V> {
+        let mut map = self.entries.lock().unwrap();
+        if let Some(entry) = map.get(key) {
+            if Instant::now() < entry.expires_at {
+                return Some(entry.value.clone());
+            }
+            // Entry has expired — remove it
+            map.remove(key);
+        }
+        None
+    }
+
+    /// Remove all expired entries. Call this periodically to reclaim memory.
+    pub fn evict_expired(&self) {
+        let mut map = self.entries.lock().unwrap();
+        let now = Instant::now();
+        map.retain(|_, entry| now < entry.expires_at);
+    }
+}
+
+// Usage with the cache-aside pattern:
+fn get_user(cache: &TtlCache<String>, db: &Database, user_id: &str) -> String {
+    let key = format!("user:{}", user_id);
+
+    // 1. Check cache
+    if let Some(cached) = cache.get(&key) {
+        return cached; // Cache hit
+    }
+
+    // 2. Cache miss — fetch from database
+    let user = db.fetch_user(user_id);
+
+    // 3. Populate cache with 5-minute TTL
+    cache.set(key, user.clone(), Duration::from_secs(300));
+
+    user
+}
+```
+
+This demonstrates the three-step cache-aside flow: check cache, fetch on miss, then populate. The TTL ensures stale data is automatically evicted, which maps to the TTL invalidation strategy in the table above.
 
 ### Message Queues & Event Streaming
 
@@ -166,6 +295,75 @@ Producer ──→ [Topic: "orders"] ──→ Consumer Group A (Inventory)
 ### Service Mesh & API Gateways
 
 **API Gateway:** A single entry point for all client requests. Handles routing, authentication, rate limiting, and request transformation.
+
+**Rate limiter using the token bucket algorithm:**
+
+Rate limiting is a critical API gateway responsibility. The token bucket algorithm allows bursts up to a limit while enforcing a steady average rate:
+
+```rust
+use std::sync::Mutex;
+use std::time::Instant;
+
+/// Token bucket rate limiter.
+///
+/// Tokens are added at a fixed rate. Each request consumes one token.
+/// If no tokens are available, the request is rejected (HTTP 429).
+pub struct TokenBucket {
+    inner: Mutex<BucketState>,
+}
+
+struct BucketState {
+    tokens: f64,
+    max_tokens: f64,
+    refill_rate: f64, // tokens per second
+    last_refill: Instant,
+}
+
+impl TokenBucket {
+    /// Create a new rate limiter.
+    /// - `max_tokens`: burst capacity (e.g., 100 requests)
+    /// - `refill_rate`: sustained rate (e.g., 10.0 = 10 requests/second)
+    pub fn new(max_tokens: f64, refill_rate: f64) -> Self {
+        Self {
+            inner: Mutex::new(BucketState {
+                tokens: max_tokens, // start full
+                max_tokens,
+                refill_rate,
+                last_refill: Instant::now(),
+            }),
+        }
+    }
+
+    /// Try to consume one token. Returns `true` if the request is allowed.
+    pub fn try_acquire(&self) -> bool {
+        let mut state = self.inner.lock().unwrap();
+
+        // Refill tokens based on elapsed time
+        let now = Instant::now();
+        let elapsed = now.duration_since(state.last_refill).as_secs_f64();
+        state.tokens = (state.tokens + elapsed * state.refill_rate).min(state.max_tokens);
+        state.last_refill = now;
+
+        // Try to consume a token
+        if state.tokens >= 1.0 {
+            state.tokens -= 1.0;
+            true // Request allowed
+        } else {
+            false // Rate limited — return HTTP 429
+        }
+    }
+}
+
+// Usage in an API gateway or middleware:
+// let limiter = TokenBucket::new(100.0, 10.0); // 100 burst, 10 req/s sustained
+//
+// if !limiter.try_acquire() {
+//     return HttpResponse::TooManyRequests(); // 429
+// }
+// // ... handle request ...
+```
+
+In a real API gateway, you would maintain one `TokenBucket` per client (keyed by API key or IP address) using a `HashMap`. Distributed rate limiting across multiple gateway instances requires a shared store like Redis.
 
 ```
 Mobile App ──→ ┌──────────────┐ ──→ User Service

@@ -195,6 +195,140 @@ Docs-as-code treats documentation like source code:
 
 **Why this works:** Documentation that lives outside the repo (in Confluence, Google Docs, Notion) inevitably drifts from reality. When docs live next to the code, developers are more likely to update them when the code changes.
 
+### Documentation in Rust (rustdoc)
+
+Rust has first-class support for docs-as-code through its built-in documentation toolchain, `rustdoc`. Documentation is written as comments directly in the source code, version controlled alongside it, and — uniquely — documentation examples are compiled and executed as tests. This means your docs can never silently drift from reality: if the code changes and the example breaks, your test suite catches it.
+
+**Writing documentation comments:**
+
+Rust uses `///` for documenting the item that follows (functions, structs, enums, etc.) and `//!` for documenting the enclosing item (typically a module or crate root). Documentation is written in Markdown.
+
+```rust
+//! # my_math
+//!
+//! A small library for common math operations.
+//! This crate-level comment appears on the front page of the generated docs.
+
+/// Computes the greatest common divisor of two positive integers
+/// using the Euclidean algorithm.
+///
+/// # Arguments
+///
+/// * `a` - The first positive integer
+/// * `b` - The second positive integer
+///
+/// # Examples
+///
+/// ```
+/// use my_math::gcd;
+///
+/// assert_eq!(gcd(54, 24), 6);
+/// assert_eq!(gcd(17, 1), 1);
+/// assert_eq!(gcd(0, 5), 5);
+/// ```
+///
+/// # Panics
+///
+/// This function does not panic.
+pub fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let temp = b;
+        b = a % b;
+        a = temp;
+    }
+    a
+}
+
+/// A 2D point in Cartesian space.
+///
+/// # Examples
+///
+/// ```
+/// use my_math::Point;
+///
+/// let p = Point::new(3.0, 4.0);
+/// assert!((p.distance_to_origin() - 5.0).abs() < f64::EPSILON);
+/// ```
+pub struct Point {
+    /// The x-coordinate.
+    pub x: f64,
+    /// The y-coordinate.
+    pub y: f64,
+}
+
+impl Point {
+    /// Creates a new `Point` at the given coordinates.
+    pub fn new(x: f64, y: f64) -> Self {
+        Point { x, y }
+    }
+
+    /// Returns the Euclidean distance from this point to the origin.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use my_math::Point;
+    ///
+    /// let p = Point::new(0.0, 0.0);
+    /// assert_eq!(p.distance_to_origin(), 0.0);
+    /// ```
+    pub fn distance_to_origin(&self) -> f64 {
+        (self.x.powi(2) + self.y.powi(2)).sqrt()
+    }
+}
+```
+
+**Conventional `rustdoc` sections:** The `# Examples`, `# Panics`, `# Errors`, `# Safety`, and `# Arguments` headings are conventions recognized by the Rust community and rendered clearly in the generated HTML.
+
+**How doc tests work:**
+
+Every fenced code block inside a `///` comment is extracted by `cargo test` and compiled as an independent test case. This means the examples above are not just illustrative — they are run on every CI build. If someone changes `gcd` to return the wrong result, the doc test fails:
+
+```
+$ cargo test --doc
+   Doc-tests my_math
+
+running 4 tests
+test src/lib.rs - gcd (line 12) ... ok
+test src/lib.rs - Point (line 36) ... ok
+test src/lib.rs - Point::distance_to_origin (line 57) ... ok
+test src/lib.rs - Point::new (line 49) ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored
+```
+
+You can also hide setup lines from the rendered documentation while still compiling them, using `#`:
+
+```rust
+/// Parses a config string and returns the port number.
+///
+/// # Examples
+///
+/// ```
+/// # // This line is compiled but hidden in the rendered docs:
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let port = my_app::parse_port("port=8080")?;
+/// assert_eq!(port, 8080);
+/// # Ok(())
+/// # }
+/// ```
+pub fn parse_port(config: &str) -> Result<u16, Box<dyn std::error::Error>> {
+    // ...
+#     let val = config.split('=').nth(1).ok_or("missing value")?;
+#     Ok(val.parse()?)
+}
+```
+
+**Generating HTML documentation:**
+
+```
+$ cargo doc --open
+```
+
+This builds browsable HTML documentation for your crate and all its dependencies, then opens it in a browser. The output mirrors the style of [docs.rs](https://docs.rs), the central documentation host for all published Rust crates.
+
+**Why this matters for documentation engineering:** Rust's approach embodies several docs-as-code principles simultaneously: documentation lives in the source file (so it is version controlled and reviewed in PRs), examples are tested (so they cannot go stale), and the generated output is consistent and navigable across the entire ecosystem. It is one of the strongest real-world examples of documentation that is automatically kept honest by the toolchain itself.
+
 ### README-Driven Development
 
 Write the README *before* writing the code. This forces you to think about:

@@ -194,6 +194,146 @@ spec:
             initialDelaySeconds: 15
 ```
 
+#### Health Check Endpoint in Rust (axum)
+
+The Kubernetes deployment above references `/health` for its readiness and liveness probes. Here is how to implement that endpoint so the cluster knows when a pod is ready to receive traffic and when it should be restarted:
+
+```rust
+use axum::{routing::get, Json, Router};
+use serde::Serialize;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+#[derive(Clone)]
+struct AppState {
+    /// Flipped to false when the process receives a shutdown signal.
+    ready: Arc<RwLock<bool>>,
+}
+
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    version: &'static str,
+}
+
+/// Liveness probe — "is the process alive?"
+/// Returns 200 as long as the server can respond at all.
+async fn liveness() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "alive",
+        version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+/// Readiness probe — "should the load balancer send traffic here?"
+/// Returns 503 once a shutdown has been initiated so that the
+/// load balancer drains traffic before the pod terminates.
+async fn readiness(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> (axum::http::StatusCode, Json<HealthResponse>) {
+    let ready = *state.ready.read().await;
+    let status_code = if ready {
+        axum::http::StatusCode::OK
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    };
+    (
+        status_code,
+        Json(HealthResponse {
+            status: if ready { "ready" } else { "shutting_down" },
+            version: env!("CARGO_PKG_VERSION"),
+        }),
+    )
+}
+
+fn health_routes(state: AppState) -> Router {
+    Router::new()
+        .route("/healthz", get(liveness))
+        .route("/ready", get(readiness))
+        .with_state(state)
+}
+```
+
+A common pattern is to separate liveness (`/healthz`) from readiness (`/ready`). Kubernetes uses liveness to decide whether to *restart* a pod (the process is hung) and readiness to decide whether to *route traffic* to it (the pod is still starting up, or is draining before shutdown).
+
+#### Graceful Shutdown in Rust (axum + tokio)
+
+During a rolling deployment, Kubernetes sends `SIGTERM` to the old pod and expects it to finish in-flight requests before exiting. If the process ignores the signal and dies immediately, users see failed requests. A graceful shutdown handler solves this:
+
+```rust
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use tokio::sync::RwLock;
+
+#[tokio::main]
+async fn main() {
+    let state = AppState {
+        ready: Arc::new(RwLock::new(true)),
+    };
+
+    let app = Router::new()
+        .route("/healthz", get(liveness))
+        .route("/ready", get(readiness))
+        // ... application routes ...
+        .with_state(state.clone());
+
+    let listener = TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    println!("listening on {}", listener.local_addr().unwrap());
+
+    // `axum::serve` accepts a future that resolves when the server
+    // should begin shutting down.  We use a tokio signal listener
+    // that completes on SIGTERM (the signal Kubernetes sends).
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(state))
+        .await
+        .unwrap();
+
+    println!("shutdown complete");
+}
+
+async fn shutdown_signal(state: AppState) {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to listen for ctrl+c");
+    };
+
+    let sigterm = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to listen for SIGTERM")
+            .recv()
+            .await;
+    };
+
+    // Wait for either signal.
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = sigterm => {},
+    }
+
+    println!("shutdown signal received, draining connections...");
+
+    // Mark the pod as not-ready so the readiness probe fails and
+    // Kubernetes stops sending new traffic to this pod.
+    *state.ready.write().await = false;
+
+    // Give the load balancer a moment to notice the failing probe
+    // before axum starts refusing new connections.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+}
+```
+
+**How this interacts with Kubernetes during a rolling deployment:**
+
+1. Kubernetes sends `SIGTERM` to the old pod.
+2. `shutdown_signal` fires and sets `ready` to `false`.
+3. The readiness probe starts returning 503, so the Service stops routing new requests here.
+4. After a 5-second grace period, axum stops accepting new connections but finishes all in-flight requests.
+5. Once all responses are sent, the server exits cleanly.
+6. Only then does Kubernetes remove the pod.
+
+This is why the deployment YAML above sets `readinessProbe` — without it, users hit pods that are mid-shutdown.
+
 ### GitOps
 
 GitOps uses Git as the single source of truth for infrastructure and application configuration. Changes to infrastructure happen through Git commits and pull requests, not through manual commands.

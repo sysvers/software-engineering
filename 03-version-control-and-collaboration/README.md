@@ -48,6 +48,62 @@ Git history is a DAG, not a linear list. Each commit points to its parent(s). Me
 - **HEAD** points to your current branch (or directly to a commit in "detached HEAD" state)
 - **Tags** are permanent pointers to specific commits (used for releases)
 
+**Programmatic Git access with the `git2` crate:**
+
+You can interact with Git repositories directly from Rust using the [`git2`](https://crates.io/crates/git2) crate (bindings to libgit2). This is useful for building custom tooling, dashboards, or CI integrations.
+
+```rust
+// Cargo.toml dependency: git2 = "0.19"
+
+use git2::Repository;
+
+fn main() -> Result<(), git2::Error> {
+    // Open the repository in the current directory
+    let repo = Repository::open(".")?;
+
+    // --- Check current branch ---
+    let head = repo.head()?;
+    let branch_name = head.shorthand().unwrap_or("(detached)");
+    println!("Current branch: {branch_name}");
+
+    // --- Check for uncommitted changes ---
+    let statuses = repo.statuses(None)?;
+    let dirty_count = statuses
+        .iter()
+        .filter(|s| s.status() != git2::Status::CURRENT)
+        .count();
+    if dirty_count > 0 {
+        println!("Working tree has {dirty_count} uncommitted change(s)");
+    } else {
+        println!("Working tree is clean");
+    }
+
+    // --- List the 5 most recent commits ---
+    let mut revwalk = repo.revwalk()?;
+    revwalk.push_head()?;
+    revwalk.set_sorting(git2::Sort::TIME)?;
+
+    println!("\nRecent commits:");
+    for (i, oid) in revwalk.enumerate() {
+        if i >= 5 {
+            break;
+        }
+        let oid = oid?;
+        let commit = repo.find_commit(oid)?;
+        let summary = commit.summary().unwrap_or("(no message)");
+        let author = commit.author();
+        let name = author.name().unwrap_or("unknown");
+        // Short hash: first 7 characters of the SHA
+        let short_hash = &oid.to_string()[..7];
+        println!("  {short_hash} — {name}: {summary}");
+    }
+
+    Ok(())
+}
+```
+
+This gives you the building blocks for tasks like enforcing branch naming conventions in CI, generating changelogs, or building status dashboards — all without shelling out to the `git` CLI.
+
 ### Branching Strategies
 
 How teams organize branches directly affects their ability to deliver software quickly and safely.
@@ -190,6 +246,46 @@ Code review is one of the highest-leverage SE practices. It catches bugs, spread
 - Rewrite the author's code in your style
 - Block PRs for subjective preferences
 - Approve without reading ("LGTM" rubber-stamping)
+
+**Automating formatting and lint checks with a pre-commit hook (Rust example):**
+
+Instead of arguing about formatting in code review, enforce it automatically. The following `.git/hooks/pre-commit` script runs `cargo fmt` and `cargo clippy` before every commit in a Rust project. If either tool fails, the commit is rejected.
+
+```bash
+#!/usr/bin/env bash
+# .git/hooks/pre-commit — Enforce formatting and lint rules for Rust projects
+# Make executable: chmod +x .git/hooks/pre-commit
+
+set -euo pipefail
+
+echo "==> Running cargo fmt --check..."
+if ! cargo fmt --check 2>/dev/null; then
+    echo ""
+    echo "ERROR: Code is not formatted. Run 'cargo fmt' and re-stage your changes."
+    exit 1
+fi
+
+echo "==> Running cargo clippy..."
+if ! cargo clippy --all-targets --all-features -- -D warnings 2>/dev/null; then
+    echo ""
+    echo "ERROR: Clippy found warnings. Fix them before committing."
+    exit 1
+fi
+
+echo "==> Pre-commit checks passed."
+exit 0
+```
+
+**Tip:** Rather than asking every developer to manually install this hook, commit a `hooks/pre-commit` file to the repository and have your project's setup script (or a `Makefile` target) symlink it:
+
+```bash
+# In your Makefile or setup script
+setup-hooks:
+	ln -sf ../../hooks/pre-commit .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
+```
+
+Alternatively, use a tool like [pre-commit](https://pre-commit.com/) or [cargo-husky](https://crates.io/crates/cargo-husky) to manage hooks declaratively. The key point: formatting and lint discussions should never appear in code review — the CI and hooks handle them.
 
 **Good PR practices:**
 - **Small PRs** — Under 400 lines of changes. Large PRs get rubber-stamped because reviewers lose focus.
