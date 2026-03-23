@@ -27,6 +27,135 @@ An SLO is a target value or range for an SLI. It is an internal agreement on how
 
 SLOs are not aspirational -- they are precise engineering targets that drive operational decisions. Setting SLOs too high wastes engineering effort on diminishing returns. Setting them too low erodes user trust. The right SLO balances user expectations, business needs, and engineering cost.
 
+The following example shows how to track multiple SLOs for a service, record request outcomes, and determine whether each objective is currently being met:
+
+```rust
+use std::collections::HashMap;
+use std::time::{Duration, SystemTime};
+
+/// A single SLO definition with its measurement window and target.
+struct SloDefinition {
+    name: String,
+    target: f64,           // e.g., 0.999 for 99.9%
+    window: Duration,      // rolling measurement window
+}
+
+/// A timestamped request outcome used for windowed SLO calculation.
+struct RequestOutcome {
+    timestamp: SystemTime,
+    success: bool,
+    latency: Duration,
+}
+
+/// Tracks multiple SLOs for a service and computes real-time compliance.
+struct SloTracker {
+    definitions: Vec<SloDefinition>,
+    outcomes: Vec<RequestOutcome>,
+}
+
+#[derive(Debug)]
+struct SloStatus {
+    name: String,
+    target: f64,
+    actual: f64,
+    compliant: bool,
+    error_budget_remaining: f64, // fraction of budget left (0.0 to 1.0)
+    total_in_window: usize,
+    failures_in_window: usize,
+}
+
+impl SloTracker {
+    fn new(definitions: Vec<SloDefinition>) -> Self {
+        Self {
+            definitions,
+            outcomes: Vec::new(),
+        }
+    }
+
+    fn record(&mut self, success: bool, latency: Duration) {
+        self.outcomes.push(RequestOutcome {
+            timestamp: SystemTime::now(),
+            success,
+            latency,
+        });
+    }
+
+    /// Evaluate all SLOs against the current window of request data.
+    fn evaluate(&self, now: SystemTime) -> Vec<SloStatus> {
+        self.definitions
+            .iter()
+            .map(|slo| {
+                let cutoff = now - slo.window;
+                let windowed: Vec<&RequestOutcome> = self
+                    .outcomes
+                    .iter()
+                    .filter(|o| o.timestamp >= cutoff)
+                    .collect();
+
+                let total = windowed.len();
+                let failures = windowed.iter().filter(|o| !o.success).count();
+                let actual = if total == 0 {
+                    1.0
+                } else {
+                    1.0 - (failures as f64 / total as f64)
+                };
+
+                let budget_fraction = 1.0 - slo.target; // e.g., 0.001 for 99.9%
+                let allowed_failures = (total as f64 * budget_fraction).floor() as usize;
+                let budget_remaining = if allowed_failures == 0 {
+                    if failures == 0 { 1.0 } else { 0.0 }
+                } else {
+                    1.0 - (failures as f64 / allowed_failures as f64)
+                };
+
+                SloStatus {
+                    name: slo.name.clone(),
+                    target: slo.target,
+                    actual,
+                    compliant: actual >= slo.target,
+                    error_budget_remaining: budget_remaining.max(0.0),
+                    total_in_window: total,
+                    failures_in_window: failures,
+                }
+            })
+            .collect()
+    }
+
+    /// Returns true if any SLO has exhausted its error budget.
+    fn any_budget_exhausted(&self, now: SystemTime) -> bool {
+        self.evaluate(now)
+            .iter()
+            .any(|s| s.error_budget_remaining <= 0.0)
+    }
+}
+
+fn main() {
+    let tracker = SloTracker::new(vec![
+        SloDefinition {
+            name: "availability".into(),
+            target: 0.999,
+            window: Duration::from_secs(30 * 24 * 3600),
+        },
+        SloDefinition {
+            name: "latency-p99-under-200ms".into(),
+            target: 0.99,
+            window: Duration::from_secs(7 * 24 * 3600),
+        },
+    ]);
+
+    for status in tracker.evaluate(SystemTime::now()) {
+        println!(
+            "SLO '{}': actual={:.4}%, target={:.4}%, compliant={}, budget_remaining={:.1}%",
+            status.name,
+            status.actual * 100.0,
+            status.target * 100.0,
+            status.compliant,
+            status.error_budget_remaining * 100.0,
+        );
+    }
+}
+```
+
 ### Error Budgets
 
 The error budget is the inverse of an SLO. If your SLO is 99.9% availability, your error budget is 0.1% -- roughly 43 minutes of downtime per month. The error budget is a powerful concept because it reframes reliability as a resource to be spent, not a constraint to be maximized.
@@ -177,6 +306,142 @@ impl Incident {
 }
 ```
 
+A structured incident logging system goes beyond modeling the incident itself -- it captures a machine-readable audit trail of every action taken during response, enabling analysis of response patterns across incidents:
+
+```rust
+use std::fmt;
+use std::time::SystemTime;
+
+#[derive(Debug, Clone)]
+enum LogLevel {
+    Info,
+    Warning,
+    Critical,
+}
+
+#[derive(Debug, Clone)]
+enum IncidentAction {
+    Detected { source: String, alert_name: String },
+    SeverityAssigned(String),            // "SEV-1", "SEV-2", etc.
+    CommanderAssigned(String),           // on-call engineer name
+    CommunicationSent { channel: String, message: String },
+    MitigationAttempted { action: String, successful: bool },
+    Escalated { from: String, to: String, reason: String },
+    ServiceImpact { service: String, impact_pct: f64 },
+    Resolved { root_cause: String },
+    PostMortemLink(String),
+}
+
+struct IncidentLogEntry {
+    timestamp: SystemTime,
+    level: LogLevel,
+    action: IncidentAction,
+    author: String,
+}
+
+/// A structured log that records every action during an incident for later analysis.
+struct IncidentLog {
+    incident_id: String,
+    entries: Vec<IncidentLogEntry>,
+}
+
+impl IncidentLog {
+    fn new(incident_id: &str) -> Self {
+        Self {
+            incident_id: incident_id.to_string(),
+            entries: Vec::new(),
+        }
+    }
+
+    fn append(&mut self, level: LogLevel, action: IncidentAction, author: &str) {
+        self.entries.push(IncidentLogEntry {
+            timestamp: SystemTime::now(),
+            level,
+            action,
+            author: author.to_string(),
+        });
+    }
+
+    /// Calculate time from detection to first mitigation attempt.
+    fn time_to_first_mitigation(&self) -> Option<std::time::Duration> {
+        let detected = self.entries.iter().find_map(|e| {
+            if matches!(e.action, IncidentAction::Detected { .. }) {
+                Some(e.timestamp)
+            } else {
+                None
+            }
+        });
+        let first_mitigation = self.entries.iter().find_map(|e| {
+            if matches!(e.action, IncidentAction::MitigationAttempted { .. }) {
+                Some(e.timestamp)
+            } else {
+                None
+            }
+        });
+        match (detected, first_mitigation) {
+            (Some(d), Some(m)) => m.duration_since(d).ok(),
+            _ => None,
+        }
+    }
+
+    /// Count how many mitigation attempts were made before success.
+    fn mitigation_attempts(&self) -> (usize, usize) {
+        let mut total = 0;
+        let mut successful = 0;
+        for entry in &self.entries {
+            if let IncidentAction::MitigationAttempted {
+                successful: ok, ..
+            } = &entry.action
+            {
+                total += 1;
+                if *ok {
+                    successful += 1;
+                }
+            }
+        }
+        (total, successful)
+    }
+
+    /// List all affected services and their impact percentages.
+    fn affected_services(&self) -> Vec<(String, f64)> {
+        self.entries
+            .iter()
+            .filter_map(|e| {
+                if let IncidentAction::ServiceImpact {
+                    service,
+                    impact_pct,
+                } = &e.action
+                {
+                    Some((service.clone(), *impact_pct))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+impl fmt::Display for IncidentLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "=== Incident {} ===", self.incident_id)?;
+        for entry in &self.entries {
+            writeln!(
+                f,
+                "[{:?}] ({}) {:?} -- {}",
+                entry.level, entry.author, entry.action,
+                entry.timestamp
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            )?;
+        }
+        let (total, successful) = self.mitigation_attempts();
+        writeln!(f, "Mitigation attempts: {total} total, {successful} successful")?;
+        Ok(())
+    }
+}
+```
+
 ### On-Call Practices
 
 On-call is the practice of having engineers available to respond to production issues outside normal working hours. Healthy on-call practices include:
@@ -216,6 +481,229 @@ Google's SRE book recommends that SRE teams spend no more than 50% of their time
 Reliability is not an afterthought or an ops concern -- it is a product feature. Users do not distinguish between "the feature is broken" and "the feature is unavailable." Both result in the same experience: the product does not work.
 
 This means reliability work competes with feature work for engineering resources, and the error budget provides the mechanism for making that trade-off explicit and data-driven. Product managers and engineers negotiate SLOs together, and the error budget determines when reliability takes priority over new features.
+
+A health check aggregator is a concrete example of reliability as a feature -- it gives operators and load balancers a single endpoint that reports whether the service and all its dependencies are functioning correctly:
+
+```rust
+use std::collections::HashMap;
+use std::fmt;
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, PartialEq)]
+enum HealthStatus {
+    Healthy,
+    Degraded(String), // reason for degradation
+    Unhealthy(String), // reason for failure
+}
+
+#[derive(Debug, Clone)]
+struct DependencyHealth {
+    name: String,
+    status: HealthStatus,
+    latency: Duration,
+    last_checked: Instant,
+}
+
+/// Simulates checking a dependency and returning its health.
+/// In production, each function would make a real connection attempt.
+trait HealthCheckable {
+    fn name(&self) -> &str;
+    fn check(&self) -> DependencyHealth;
+}
+
+struct DatabaseCheck {
+    connection_string: String,
+    timeout: Duration,
+}
+
+impl HealthCheckable for DatabaseCheck {
+    fn name(&self) -> &str {
+        "database"
+    }
+
+    fn check(&self) -> DependencyHealth {
+        let start = Instant::now();
+        // In production: attempt a lightweight query like "SELECT 1"
+        let latency = start.elapsed();
+        let status = if latency > self.timeout {
+            HealthStatus::Unhealthy(format!(
+                "query took {:?}, exceeds timeout {:?}",
+                latency, self.timeout
+            ))
+        } else if latency > self.timeout / 2 {
+            HealthStatus::Degraded(format!("query took {:?}, above warning threshold", latency))
+        } else {
+            HealthStatus::Healthy
+        };
+
+        DependencyHealth {
+            name: self.name().to_string(),
+            status,
+            latency,
+            last_checked: Instant::now(),
+        }
+    }
+}
+
+struct CacheCheck {
+    host: String,
+    timeout: Duration,
+}
+
+impl HealthCheckable for CacheCheck {
+    fn name(&self) -> &str {
+        "cache"
+    }
+
+    fn check(&self) -> DependencyHealth {
+        let start = Instant::now();
+        // In production: send a PING command to Redis/Memcached
+        let latency = start.elapsed();
+        DependencyHealth {
+            name: self.name().to_string(),
+            status: HealthStatus::Healthy,
+            latency,
+            last_checked: Instant::now(),
+        }
+    }
+}
+
+struct ExternalApiCheck {
+    url: String,
+    timeout: Duration,
+}
+
+impl HealthCheckable for ExternalApiCheck {
+    fn name(&self) -> &str {
+        "external-api"
+    }
+
+    fn check(&self) -> DependencyHealth {
+        let start = Instant::now();
+        // In production: HTTP GET to the external API's health endpoint
+        let latency = start.elapsed();
+        DependencyHealth {
+            name: self.name().to_string(),
+            status: HealthStatus::Healthy,
+            latency,
+            last_checked: Instant::now(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AggregatedHealth {
+    overall: HealthStatus,
+    dependencies: Vec<DependencyHealth>,
+    checked_at: Instant,
+}
+
+/// Aggregates health checks across all dependencies into a single status.
+struct HealthAggregator {
+    checks: Vec<Box<dyn HealthCheckable>>,
+}
+
+impl HealthAggregator {
+    fn new() -> Self {
+        Self { checks: Vec::new() }
+    }
+
+    fn add_check(&mut self, check: Box<dyn HealthCheckable>) {
+        self.checks.push(check);
+    }
+
+    /// Run all health checks and compute the overall status.
+    /// Overall status follows the worst-case: if any dependency is unhealthy,
+    /// the service is unhealthy. If any is degraded, the service is degraded.
+    fn check_all(&self) -> AggregatedHealth {
+        let results: Vec<DependencyHealth> =
+            self.checks.iter().map(|c| c.check()).collect();
+
+        let overall = if results
+            .iter()
+            .any(|r| matches!(r.status, HealthStatus::Unhealthy(_)))
+        {
+            let failed: Vec<&str> = results
+                .iter()
+                .filter_map(|r| match &r.status {
+                    HealthStatus::Unhealthy(_) => Some(r.name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            HealthStatus::Unhealthy(format!("failing dependencies: {}", failed.join(", ")))
+        } else if results
+            .iter()
+            .any(|r| matches!(r.status, HealthStatus::Degraded(_)))
+        {
+            let degraded: Vec<&str> = results
+                .iter()
+                .filter_map(|r| match &r.status {
+                    HealthStatus::Degraded(_) => Some(r.name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            HealthStatus::Degraded(format!(
+                "degraded dependencies: {}",
+                degraded.join(", ")
+            ))
+        } else {
+            HealthStatus::Healthy
+        };
+
+        AggregatedHealth {
+            overall,
+            dependencies: results,
+            checked_at: Instant::now(),
+        }
+    }
+
+    /// Returns true only if every dependency is fully healthy.
+    fn is_ready(&self) -> bool {
+        self.check_all().overall == HealthStatus::Healthy
+    }
+}
+
+impl fmt::Display for AggregatedHealth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Overall: {:?}", self.overall)?;
+        for dep in &self.dependencies {
+            writeln!(
+                f,
+                "  {}: {:?} (latency: {:?})",
+                dep.name, dep.status, dep.latency
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn main() {
+    let mut aggregator = HealthAggregator::new();
+
+    aggregator.add_check(Box::new(DatabaseCheck {
+        connection_string: "postgres://localhost:5432/mydb".into(),
+        timeout: Duration::from_millis(500),
+    }));
+    aggregator.add_check(Box::new(CacheCheck {
+        host: "redis://localhost:6379".into(),
+        timeout: Duration::from_millis(100),
+    }));
+    aggregator.add_check(Box::new(ExternalApiCheck {
+        url: "https://api.example.com/health".into(),
+        timeout: Duration::from_secs(2),
+    }));
+
+    let health = aggregator.check_all();
+    println!("{health}");
+    // Output:
+    // Overall: Healthy
+    //   database: Healthy (latency: 42ns)
+    //   cache: Healthy (latency: 28ns)
+    //   external-api: Healthy (latency: 31ns)
+
+    println!("Service ready: {}", aggregator.is_ready());
+}
+```
 
 ---
 
