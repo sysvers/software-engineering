@@ -1,0 +1,18 @@
+graph TB
+    subgraph "Level 1: System Context"
+        User[User] --> System[My System]
+        System --> ExtA[External System A]
+        System --> ExtB[External System B]
+    end
+
+    subgraph "Level 2: Containers"
+        WebApp[Web App] --> API[API Server]
+        API --> DB[(Database)]
+        API --> MQ[Message Queue]
+    end
+
+    subgraph "Level 3: Components"
+        AuthCtrl[Auth Controller] --> UserSvc[User Service]
+        OrderCtrl[Order Controller] --> OrderSvc[Order Service]
+        OrderSvc --> OrderRepo[Order Repository]
+    end

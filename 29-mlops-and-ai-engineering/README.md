@@ -1,5 +1,12 @@
 # Topic 29: MLOps & AI Engineering
 
+## Diagrams
+
+![ML Pipeline](diagrams/ml-pipeline.png)
+
+![Model Drift](diagrams/model-drift.png)
+
+
 MLOps is the discipline of operationalizing machine learning models -- bridging the gap between a notebook prototype and a production system that serves predictions reliably at scale. AI Engineering extends this to encompass the full lifecycle of intelligent systems: data pipelines, training infrastructure, model serving, monitoring, and governance. This topic covers the principles, patterns, and trade-offs involved in building ML systems that are reproducible, observable, and maintainable.
 
 ---

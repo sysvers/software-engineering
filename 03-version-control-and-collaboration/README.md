@@ -1,5 +1,12 @@
 # 03 - Version Control & Collaboration
 
+## Diagrams
+
+![Branching Strategies](diagrams/branching-strategies.png)
+
+![PR Workflow](diagrams/pr-workflow.png)
+
+
 ## Concepts
 
 ### Why Version Control?

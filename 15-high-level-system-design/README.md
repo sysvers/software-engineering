@@ -1,5 +1,12 @@
 # 15 - High-Level System Design
 
+## Diagrams
+
+![Chat System](diagrams/chat-system.png)
+
+![URL Shortener](diagrams/url-shortener.png)
+
+
 ## Concepts
 
 ### What is High-Level System Design?

@@ -1,0 +1,12 @@
+graph TD
+    A[Bug Reported] --> B[Reproduce the Bug]
+    B -->|Cannot Reproduce| C[Gather More Data<br/>Logs, Stack Traces, User Reports]
+    C --> B
+    B -->|Reproduced| D[Observe & Collect Symptoms]
+    D --> E[Form Hypothesis]
+    E --> F[Test Hypothesis]
+    F -->|Disproved| E
+    F -->|Confirmed| G[Apply Minimal Fix]
+    G --> H[Write Regression Test]
+    H --> I[Verify Fix in Affected Environment]
+    I --> J[Deploy]

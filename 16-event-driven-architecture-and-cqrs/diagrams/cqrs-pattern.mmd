@@ -1,0 +1,13 @@
+graph LR
+    subgraph "Write Side"
+        CMD[Commands] --> WM[Write Model<br/>Domain Logic]
+        WM --> ES[(Event Store)]
+    end
+
+    ES -->|Events| PB[Projection Builder]
+
+    subgraph "Read Side"
+        Q[Queries] --> RM[Read Model<br/>Optimized Views]
+    end
+
+    PB --> RM

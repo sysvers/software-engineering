@@ -1,0 +1,23 @@
+graph TB
+    subgraph "Phase 1: Start"
+        P1_LB[Load Balancer] --> P1_Old[Legacy System<br/>100% traffic]
+    end
+
+    subgraph "Phase 2: Strangle"
+        P2_LB[Load Balancer]
+        P2_LB -->|/api/orders| P2_New[New Service<br/>Orders]
+        P2_LB -->|everything else| P2_Old[Legacy System]
+    end
+
+    subgraph "Phase 3: Complete"
+        P3_LB[Load Balancer] --> P3_New1[New: Orders]
+        P3_LB --> P3_New2[New: Users]
+        P3_LB --> P3_New3[New: Products]
+        P3_Old2[Legacy<br/>Decommissioned]
+    end
+
+    style P1_Old fill:#e74c3c,color:#fff
+    style P3_Old2 fill:#95a5a6,color:#fff
+    style P3_New1 fill:#2ecc71,color:#fff
+    style P3_New2 fill:#2ecc71,color:#fff
+    style P3_New3 fill:#2ecc71,color:#fff

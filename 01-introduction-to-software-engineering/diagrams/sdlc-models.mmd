@@ -1,0 +1,9 @@
+graph LR
+    subgraph Waterfall
+        W1[Requirements] --> W2[Design] --> W3[Implementation] --> W4[Testing] --> W5[Deployment] --> W6[Maintenance]
+    end
+
+    subgraph Agile / Iterative
+        A1[Plan] --> A2[Build] --> A3[Test] --> A4[Review]
+        A4 --> A1
+    end

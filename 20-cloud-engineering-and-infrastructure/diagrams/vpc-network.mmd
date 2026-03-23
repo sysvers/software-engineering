@@ -1,0 +1,26 @@
+graph TB
+    Internet[Internet] --> IGW[Internet Gateway]
+
+    subgraph VPC["VPC (10.0.0.0/16)"]
+        subgraph Public["Public Subnet (10.0.1.0/24)"]
+            LB[Load Balancer]
+            NAT[NAT Gateway]
+        end
+        subgraph Private["Private Subnet (10.0.2.0/24)"]
+            App1[App Server 1]
+            App2[App Server 2]
+        end
+        subgraph Data["Data Subnet (10.0.3.0/24)"]
+            DB[(Database)]
+            Cache[(Redis)]
+        end
+    end
+
+    IGW --> LB
+    LB --> App1
+    LB --> App2
+    App1 --> DB
+    App2 --> DB
+    App1 --> Cache
+    App1 --> NAT
+    NAT --> Internet

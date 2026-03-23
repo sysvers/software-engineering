@@ -1,0 +1,13 @@
+graph TB
+    subgraph "Consistent Hashing Ring"
+        direction TB
+        N1((Node A)) ---|hash range| N2((Node B))
+        N2 ---|hash range| N3((Node C))
+        N3 ---|hash range| N1
+    end
+
+    K1[Key 1] -.->|maps to| N1
+    K2[Key 2] -.->|maps to| N2
+    K3[Key 3] -.->|maps to| N3
+
+    Note[Adding/removing a node<br/>only affects adjacent keys]

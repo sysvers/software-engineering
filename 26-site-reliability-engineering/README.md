@@ -1,5 +1,12 @@
 # Topic 26: Site Reliability Engineering (SRE)
 
+## Diagrams
+
+![Error Budget](diagrams/error-budget.png)
+
+![Incident Response](diagrams/incident-response.png)
+
+
 Site Reliability Engineering is a discipline that applies software engineering principles to infrastructure and operations problems. Originated at Google, SRE treats operations as a software problem, building systems and tooling to manage large-scale, high-reliability production environments. The core thesis is that reliability is the most fundamental feature of any system -- if users cannot reach your service, nothing else matters.
 
 ---

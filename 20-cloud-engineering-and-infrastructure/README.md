@@ -1,5 +1,10 @@
 # 20 - Cloud Engineering & Infrastructure
 
+## Diagrams
+
+![VPC Network](diagrams/vpc-network.png)
+
+
 ## Concepts
 
 ### Cloud-Native Design

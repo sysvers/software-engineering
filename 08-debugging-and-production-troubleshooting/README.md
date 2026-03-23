@@ -1,5 +1,12 @@
 # 08 - Debugging & Production Troubleshooting
 
+## Diagrams
+
+![Debugging Methodology](diagrams/debugging-methodology.png)
+
+![Production Debugging Tools](diagrams/production-debugging-tools.png)
+
+
 ## Concepts
 
 ### Systematic Debugging

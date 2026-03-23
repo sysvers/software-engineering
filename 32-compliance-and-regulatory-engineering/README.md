@@ -1,5 +1,10 @@
 # Topic 32: Compliance & Regulatory Engineering
 
+## Diagrams
+
+![Compliance Frameworks](diagrams/compliance-frameworks.png)
+
+
 Compliance and regulatory engineering is the discipline of designing, building, and operating software systems that satisfy legal, contractual, and industry-specific requirements. Unlike ad-hoc compliance efforts bolted on after the fact, regulatory engineering treats compliance as a first-class architectural concern -- embedding controls, audit mechanisms, and policy enforcement directly into the software development lifecycle. The goal is not merely to pass an audit but to build systems that are continuously and demonstrably compliant.
 
 ---

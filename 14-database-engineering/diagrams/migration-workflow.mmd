@@ -1,0 +1,11 @@
+graph LR
+    A[Write Migration SQL] --> B[Test in Dev]
+    B --> C[Review in PR]
+    C --> D[Apply to Staging]
+    D --> E[Validate]
+    E -->|OK| F[Apply to Production]
+    E -->|Issues| G[Rollback Migration]
+    G --> A
+
+    style F fill:#2ecc71,color:#fff
+    style G fill:#e74c3c,color:#fff

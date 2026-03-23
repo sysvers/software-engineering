@@ -1,5 +1,12 @@
 # 01 - Introduction to Software Engineering
 
+## Diagrams
+
+![SDLC Models](diagrams/sdlc-models.png)
+
+![Software Team Roles](diagrams/software-team-roles.png)
+
+
 ## Concepts
 
 ### What is Software Engineering?

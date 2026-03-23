@@ -1,5 +1,12 @@
 # 04 - Documentation Engineering
 
+## Diagrams
+
+![C4 Model Levels](diagrams/c4-model-levels.png)
+
+![Diataxis Framework](diagrams/diataxis-framework.png)
+
+
 ## Concepts
 
 ### Why Documentation Matters

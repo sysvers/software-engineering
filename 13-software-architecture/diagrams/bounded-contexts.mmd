@@ -1,0 +1,13 @@
+graph TB
+    subgraph "Sales Context"
+        SC[Customer:<br/>name, preferences,<br/>purchase history]
+    end
+    subgraph "Shipping Context"
+        SH[Customer:<br/>address, delivery zone,<br/>contact phone]
+    end
+    subgraph "Billing Context"
+        BI[Customer:<br/>payment method,<br/>credit limit, billing addr]
+    end
+
+    SC ---|Integration Events| SH
+    SC ---|Integration Events| BI

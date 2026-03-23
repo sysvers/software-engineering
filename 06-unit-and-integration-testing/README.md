@@ -1,5 +1,12 @@
 # 06 - Unit & Integration Testing
 
+## Diagrams
+
+![TDD Cycle](diagrams/tdd-cycle.png)
+
+![Test Pyramid](diagrams/test-pyramid.png)
+
+
 ## Concepts
 
 ### The Test Pyramid

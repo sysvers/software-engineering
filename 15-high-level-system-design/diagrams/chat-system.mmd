@@ -1,0 +1,15 @@
+graph LR
+    C1[Client A] <--> WS1[WebSocket<br/>Gateway]
+    C2[Client B] <--> WS2[WebSocket<br/>Gateway]
+
+    WS1 --> MsgSvc[Message Service]
+    WS2 --> MsgSvc
+
+    MsgSvc --> Kafka[Kafka<br/>Message Fanout]
+    MsgSvc --> Cassandra[(Cassandra<br/>Message Store)]
+
+    Kafka --> WS1
+    Kafka --> WS2
+
+    Presence[Presence Service<br/>Redis] --> WS1
+    Presence --> WS2

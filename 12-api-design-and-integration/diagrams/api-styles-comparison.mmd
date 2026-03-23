@@ -1,0 +1,10 @@
+graph LR
+    subgraph "REST"
+        R1[GET /users/123] --> R2[JSON Response]
+    end
+    subgraph "GraphQL"
+        G1["query { user(id:123) { name, posts } }"] --> G2[Exact Data Needed]
+    end
+    subgraph "gRPC"
+        P1[GetUser protobuf] --> P2[Binary Response]
+    end

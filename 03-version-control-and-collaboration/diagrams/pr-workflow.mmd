@@ -1,0 +1,9 @@
+graph LR
+    A[Create Branch] --> B[Write Code]
+    B --> C[Push & Open PR]
+    C --> D[CI Runs]
+    D -->|Fail| B
+    D -->|Pass| E[Code Review]
+    E -->|Changes Requested| B
+    E -->|Approved| F[Merge to Main]
+    F --> G[Deploy]

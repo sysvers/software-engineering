@@ -1,5 +1,10 @@
 # Topic 31: Software Economics & Cost Engineering
 
+## Diagrams
+
+![Build vs Buy](diagrams/build-vs-buy.png)
+
+
 ## Concepts
 
 Software economics and cost engineering is the discipline of applying financial reasoning to software development decisions. It treats engineering work not as a pure craft but as an investment with quantifiable costs, returns, and trade-offs. The goal is not to reduce all engineering to spreadsheets, but to ensure that technical leaders can articulate the financial consequences of their decisions and that organizations allocate engineering resources where they generate the most value.

@@ -1,5 +1,12 @@
 # 21 - Observability & Monitoring
 
+## Diagrams
+
+![Distributed Trace](diagrams/distributed-trace.png)
+
+![Three Pillars](diagrams/three-pillars.png)
+
+
 ## Concepts
 
 ### The Three Pillars of Observability

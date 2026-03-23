@@ -1,0 +1,9 @@
+stateDiagram-v2
+    [*] --> Pending
+    Pending --> Confirmed: confirm()
+    Pending --> Cancelled: cancel()
+    Confirmed --> Shipped: ship()
+    Confirmed --> Cancelled: cancel()
+    Shipped --> Delivered: deliver()
+    Delivered --> [*]
+    Cancelled --> [*]

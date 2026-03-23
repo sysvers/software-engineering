@@ -1,5 +1,12 @@
 # 14 - Database Engineering
 
+## Diagrams
+
+![Database Types](diagrams/database-types.png)
+
+![Migration Workflow](diagrams/migration-workflow.png)
+
+
 ## Concepts
 
 ### Choosing the Right Database

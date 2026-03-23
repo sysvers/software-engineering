@@ -1,0 +1,10 @@
+graph LR
+    Permissive["Permissive<br/>(MIT, BSD, Apache 2.0)<br/>Do almost anything"]
+    Weak["Weak Copyleft<br/>(LGPL, MPL)<br/>Modifications must<br/>share source"]
+    Strong["Strong Copyleft<br/>(GPL, AGPL)<br/>Derivative works<br/>must use same license"]
+
+    Permissive -->|More restrictive| Weak -->|More restrictive| Strong
+
+    style Permissive fill:#2ecc71,color:#fff
+    style Weak fill:#ffd93d,color:#333
+    style Strong fill:#e74c3c,color:#fff

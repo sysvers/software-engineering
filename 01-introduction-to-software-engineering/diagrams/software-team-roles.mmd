@@ -1,0 +1,14 @@
+graph TB
+    PM[Product Manager] --> Team
+    EM[Engineering Manager] --> Team
+    subgraph Team
+        TL[Tech Lead]
+        FE[Frontend Engineer]
+        BE[Backend Engineer]
+        QA[QA Engineer]
+        SRE[SRE]
+        DE[Data Engineer]
+    end
+    Designer[UX/UI Designer] --> Team
+    SecEng[Security Engineer] --> Team
+    DevOps[DevOps / Platform] --> Team

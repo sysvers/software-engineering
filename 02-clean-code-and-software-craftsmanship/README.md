@@ -1,5 +1,12 @@
 # 02 - Clean Code & Software Craftsmanship
 
+## Diagrams
+
+![Refactoring Cycle](diagrams/refactoring-cycle.png)
+
+![Technical Debt Quadrant](diagrams/technical-debt-quadrant.png)
+
+
 ## Concepts
 
 ### What is Clean Code?

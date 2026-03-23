@@ -1,5 +1,12 @@
 # 11 - Low-Level System Design
 
+## Diagrams
+
+![Layered Architecture](diagrams/layered-architecture.png)
+
+![State Machine](diagrams/state-machine.png)
+
+
 ## Concepts
 
 ### What is Low-Level System Design?

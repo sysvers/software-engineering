@@ -1,0 +1,10 @@
+sequenceDiagram
+    participant Consumer
+    participant Broker as Pact Broker
+    participant Provider
+
+    Consumer->>Broker: 1. Publish contract<br/>(expected requests/responses)
+    Provider->>Broker: 2. Fetch contract
+    Provider->>Provider: 3. Verify contract<br/>against real implementation
+    Provider->>Broker: 4. Report verification result
+    Broker-->>Consumer: 5. Can I deploy? (check compatibility)

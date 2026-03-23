@@ -1,5 +1,12 @@
 # Topic 27: Data Engineering & Pipelines
 
+## Diagrams
+
+![ETL vs ELT](diagrams/etl-vs-elt.png)
+
+![Star Schema](diagrams/star-schema.png)
+
+
 Data engineering is the discipline of designing, building, and maintaining the systems and
 infrastructure that collect, store, transform, and serve data at scale. Pipelines are the
 backbone of this discipline -- directed workflows that move data from sources to destinations,

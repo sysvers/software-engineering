@@ -1,5 +1,12 @@
 # 17 - Build Systems, Tooling & Developer Experience
 
+## Diagrams
+
+![Cargo Workspace](diagrams/cargo-workspace.png)
+
+![DORA Metrics](diagrams/dora-metrics.png)
+
+
 ## Concepts
 
 ### Why Developer Experience Matters

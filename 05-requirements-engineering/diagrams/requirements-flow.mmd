@@ -1,0 +1,11 @@
+graph LR
+    A[Business Need] --> B[Stakeholder Interviews]
+    B --> C[Requirements Gathering]
+    C --> D[User Stories & Acceptance Criteria]
+    D --> E[Prioritization]
+    E --> F[Validation with Stakeholders]
+    F -->|Approved| G[Development]
+    F -->|Changes| C
+    G --> H[Testing Against Criteria]
+    H -->|Pass| I[Release]
+    H -->|Fail| G

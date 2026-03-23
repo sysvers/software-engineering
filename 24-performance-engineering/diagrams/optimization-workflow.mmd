@@ -1,0 +1,8 @@
+graph TD
+    A[Identify Performance Goal<br/>SLA/SLO Target] --> B[Measure Current<br/>Benchmark & Profile]
+    B --> C{Meets Target?}
+    C -->|Yes| D[Done - Document Results]
+    C -->|No| E[Identify Bottleneck<br/>CPU? Memory? I/O? Network?]
+    E --> F[Apply Targeted Fix]
+    F --> G[Re-measure]
+    G --> C

@@ -1,0 +1,10 @@
+graph LR
+    A[Data Collection] --> B[Data Preparation<br/>Clean, Transform]
+    B --> C[Feature Engineering<br/>Feature Store]
+    C --> D[Model Training]
+    D --> E[Evaluation<br/>Metrics, Validation]
+    E -->|Not Good Enough| C
+    E -->|Passes| F[Model Registry<br/>Version, Tag]
+    F --> G[Deployment<br/>Canary / Shadow]
+    G --> H[Monitoring<br/>Drift Detection]
+    H -->|Drift Detected| B

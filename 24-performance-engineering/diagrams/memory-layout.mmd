@@ -1,0 +1,10 @@
+graph LR
+    subgraph "Array of Structs (AoS)"
+        A1["[x,y,z, x,y,z, x,y,z]"]
+        A2[Each struct together<br/>Good for single-item access]
+    end
+
+    subgraph "Struct of Arrays (SoA)"
+        S1["xs: [x,x,x]<br/>ys: [y,y,y]<br/>zs: [z,z,z]"]
+        S2[Each field together<br/>Good for batch processing<br/>Cache-friendly]
+    end

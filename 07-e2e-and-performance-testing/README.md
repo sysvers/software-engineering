@@ -1,5 +1,12 @@
 # 07 - End-to-End & Performance Testing
 
+## Diagrams
+
+![Contract Testing](diagrams/contract-testing.png)
+
+![Load Test Stages](diagrams/load-test-stages.png)
+
+
 ## Concepts
 
 ### End-to-End (E2E) Testing

@@ -1,0 +1,25 @@
+graph TB
+    subgraph "Cargo Workspace"
+        Root[Cargo.toml<br/>workspace root]
+        API[api/]
+        Domain[domain/]
+        Infra[infrastructure/]
+        CLI[cli/]
+        Shared[shared/]
+    end
+
+    Root --> API
+    Root --> Domain
+    Root --> Infra
+    Root --> CLI
+    Root --> Shared
+
+    API --> Domain
+    API --> Shared
+    Infra --> Domain
+    CLI --> Domain
+    CLI --> Shared
+
+    Lock[(Cargo.lock<br/>Shared)]
+
+    style Domain fill:#2ecc71,color:#fff

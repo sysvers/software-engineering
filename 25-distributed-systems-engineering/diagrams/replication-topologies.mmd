@@ -1,0 +1,20 @@
+graph TB
+    subgraph "Single Leader"
+        SL_L[Leader<br/>Reads + Writes] --> SL_F1[Follower<br/>Reads Only]
+        SL_L --> SL_F2[Follower<br/>Reads Only]
+    end
+
+    subgraph "Multi Leader"
+        ML_L1[Leader 1<br/>Region US] <--> ML_L2[Leader 2<br/>Region EU]
+        ML_L1 --> ML_F1[Follower]
+        ML_L2 --> ML_F2[Follower]
+    end
+
+    subgraph "Leaderless"
+        LL_N1((Node 1)) <--> LL_N2((Node 2))
+        LL_N2 <--> LL_N3((Node 3))
+        LL_N3 <--> LL_N1
+        LL_C[Client] --> LL_N1
+        LL_C --> LL_N2
+        LL_C --> LL_N3
+    end

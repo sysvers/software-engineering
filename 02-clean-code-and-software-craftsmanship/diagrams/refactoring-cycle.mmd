@@ -1,0 +1,6 @@
+graph LR
+    A[Identify Code Smell] --> B[Write Tests if Missing]
+    B --> C[Refactor]
+    C --> D[Run Tests]
+    D -->|Pass| E[Commit]
+    D -->|Fail| C

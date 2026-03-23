@@ -1,5 +1,12 @@
 # 19 - CI/CD & Deployment
 
+## Diagrams
+
+![CI Pipeline](diagrams/ci-pipeline.png)
+
+![Deployment Strategies](diagrams/deployment-strategies.png)
+
+
 ## Concepts
 
 ### Continuous Integration (CI)

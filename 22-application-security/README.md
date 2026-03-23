@@ -1,5 +1,12 @@
 # 22 - Application Security
 
+## Diagrams
+
+![OAuth2 Authorization Code](diagrams/oauth2-authorization-code.png)
+
+![OWASP Top 10](diagrams/owasp-top10.png)
+
+
 ## Concepts
 
 ### Why Application Security Matters

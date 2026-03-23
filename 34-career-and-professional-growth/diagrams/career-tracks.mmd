@@ -1,0 +1,25 @@
+graph TB
+    JR[Junior Engineer] --> MID[Mid-Level Engineer]
+    MID --> SR[Senior Engineer]
+    SR --> Staff[Staff Engineer]
+    SR --> EM[Engineering Manager]
+    Staff --> Principal[Principal Engineer]
+    EM --> Dir[Director of Engineering]
+    Principal --> Distinguished[Distinguished /<br/>Fellow]
+    Dir --> VP[VP Engineering]
+    Distinguished --> CTO_IC[CTO - Technical]
+    VP --> CTO_M[CTO - Management]
+
+    subgraph "IC Track"
+        Staff
+        Principal
+        Distinguished
+    end
+
+    subgraph "Management Track"
+        EM
+        Dir
+        VP
+    end
+
+    style SR fill:#ffd93d,color:#333

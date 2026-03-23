@@ -1,0 +1,26 @@
+classDiagram
+    class PricingStrategy {
+        <<trait>>
+        +calculate(base_price, quantity) f64
+    }
+    class RegularPricing {
+        +calculate(base_price, quantity) f64
+    }
+    class BulkPricing {
+        -threshold: u32
+        -discount: f64
+        +calculate(base_price, quantity) f64
+    }
+    class SeasonalPricing {
+        -multiplier: f64
+        +calculate(base_price, quantity) f64
+    }
+    class OrderCalculator {
+        -strategy: PricingStrategy
+        +calculate_total(items) f64
+    }
+
+    PricingStrategy <|.. RegularPricing
+    PricingStrategy <|.. BulkPricing
+    PricingStrategy <|.. SeasonalPricing
+    OrderCalculator --> PricingStrategy

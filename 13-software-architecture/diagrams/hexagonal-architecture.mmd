@@ -1,0 +1,16 @@
+graph LR
+    HTTP[HTTP Adapter] --> |Port| Domain
+    CLI[CLI Adapter] --> |Port| Domain
+    Tests[Test Adapter] --> |Port| Domain
+
+    subgraph Domain["Domain (Core Business Logic)"]
+        Entities[Entities]
+        Services[Services]
+        Ports[Ports / Traits]
+    end
+
+    Domain --> |Port| PG[Postgres Adapter]
+    Domain --> |Port| Redis[Redis Adapter]
+    Domain --> |Port| Email[Email Adapter]
+
+    style Domain fill:#2ecc71,color:#fff

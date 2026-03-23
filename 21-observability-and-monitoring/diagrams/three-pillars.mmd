@@ -1,0 +1,15 @@
+graph TB
+    subgraph "Observability"
+        Logs[Logs<br/>What happened?<br/>Structured JSON events]
+        Metrics[Metrics<br/>How much?<br/>Counters, gauges, histograms]
+        Traces[Traces<br/>Where did time go?<br/>Distributed request path]
+    end
+
+    Logs --> ELK[ELK / Loki]
+    Metrics --> Prom[Prometheus + Grafana]
+    Traces --> Jaeger[Jaeger / Tempo]
+
+    Alert[Alerting] --> Metrics
+    Alert --> Logs
+    Dashboard[Dashboards] --> Metrics
+    Dashboard --> Traces

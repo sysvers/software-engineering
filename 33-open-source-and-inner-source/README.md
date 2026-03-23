@@ -1,5 +1,10 @@
 # Topic 33: Open Source & Inner Source
 
+## Diagrams
+
+![License Spectrum](diagrams/license-spectrum.png)
+
+
 Open source software (OSS) is software whose source code is made publicly available under a license that grants users the right to use, study, modify, and distribute the software. Inner source applies the lessons and practices of open source development to proprietary codebases within an organization. Both approaches fundamentally reshape how software is built, maintained, and governed.
 
 ---

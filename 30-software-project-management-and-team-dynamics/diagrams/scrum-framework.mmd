@@ -1,0 +1,10 @@
+graph LR
+    PB[Product<br/>Backlog] --> SP[Sprint<br/>Planning]
+    SP --> SB[Sprint Backlog]
+    SB --> Sprint["Sprint (1-4 weeks)"]
+    Sprint --> DS[Daily<br/>Standup]
+    DS --> Sprint
+    Sprint --> SR[Sprint<br/>Review]
+    SR --> Retro[Sprint<br/>Retrospective]
+    Retro --> SP
+    SR --> Increment[Potentially<br/>Shippable<br/>Increment]

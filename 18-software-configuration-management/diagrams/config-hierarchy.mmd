@@ -1,0 +1,7 @@
+graph TB
+    CLI[Command-Line Args<br/>Highest Priority] --> ENV[Environment Variables]
+    ENV --> ENVFILE[Environment-Specific<br/>Config File]
+    ENVFILE --> DEFAULT[Default Config File<br/>Lowest Priority]
+
+    style CLI fill:#e74c3c,color:#fff
+    style DEFAULT fill:#2ecc71,color:#fff

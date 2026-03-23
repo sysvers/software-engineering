@@ -1,0 +1,13 @@
+graph TB
+    subgraph "Model Drift Types"
+        DD[Data Drift<br/>Input distribution changes]
+        CD[Concept Drift<br/>Relationship between<br/>input and output changes]
+        PD[Prediction Drift<br/>Output distribution changes]
+    end
+
+    DD --> Monitor[Drift Monitor<br/>Statistical Tests]
+    CD --> Monitor
+    PD --> Monitor
+
+    Monitor -->|Drift Detected| Alert[Alert + Retrain]
+    Monitor -->|No Drift| OK[Continue Serving]

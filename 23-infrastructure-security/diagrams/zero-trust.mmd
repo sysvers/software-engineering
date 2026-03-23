@@ -1,0 +1,16 @@
+graph TB
+    subgraph "Zero Trust Architecture"
+        User[User + Device] --> IDP[Identity Provider<br/>Authenticate]
+        IDP --> Policy[Policy Engine<br/>Authorize Every Request]
+        Policy --> Proxy[Access Proxy<br/>mTLS, Encrypted]
+        Proxy --> SvcA[Service A]
+        Proxy --> SvcB[Service B]
+        Proxy --> SvcC[Service C]
+    end
+
+    SvcA <-->|mTLS| SvcB
+    SvcB <-->|mTLS| SvcC
+
+    Note[Never trust,<br/>always verify]
+
+    style Policy fill:#e74c3c,color:#fff

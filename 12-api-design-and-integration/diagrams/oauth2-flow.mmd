@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant User
+    participant App as Client App
+    participant Auth as Auth Server
+    participant API as Resource Server
+
+    User->>App: 1. Click "Login with Google"
+    App->>Auth: 2. Redirect to authorization URL
+    Auth->>User: 3. Show consent screen
+    User->>Auth: 4. Grant permission
+    Auth->>App: 5. Redirect with authorization code
+    App->>Auth: 6. Exchange code for access token
+    Auth->>App: 7. Return access token
+    App->>API: 8. Request with access token
+    API->>App: 9. Protected resource

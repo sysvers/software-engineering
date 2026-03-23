@@ -1,5 +1,10 @@
 # Topic 28: Legacy Systems & Migration
 
+## Diagrams
+
+![Strangler Fig](diagrams/strangler-fig.png)
+
+
 Legacy systems are the backbone of most established organizations. They generate revenue, serve
 customers, and encode years of domain knowledge in their logic. Yet they also accumulate technical
 debt, resist change, and eventually become a bottleneck for innovation. Migrating away from a

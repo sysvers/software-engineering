@@ -1,0 +1,8 @@
+graph LR
+    subgraph "ETL (Extract, Transform, Load)"
+        E1[Source] --> T1[Transform<br/>in Pipeline] --> L1[Data Warehouse]
+    end
+
+    subgraph "ELT (Extract, Load, Transform)"
+        E2[Source] --> L2[Data Warehouse<br/>Raw] --> T2[Transform<br/>in Warehouse]
+    end

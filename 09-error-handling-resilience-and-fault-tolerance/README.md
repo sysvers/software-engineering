@@ -1,5 +1,12 @@
 # 09 - Error Handling, Resilience & Fault Tolerance
 
+## Diagrams
+
+![Circuit Breaker States](diagrams/circuit-breaker-states.png)
+
+![Retry Backoff](diagrams/retry-backoff.png)
+
+
 ## Concepts
 
 ### The Reality of Failure

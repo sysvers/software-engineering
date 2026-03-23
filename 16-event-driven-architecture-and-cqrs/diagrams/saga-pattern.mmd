@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant Saga as Order Saga
+    participant Inv as Inventory
+    participant Pay as Payment
+    participant Ship as Shipping
+
+    Saga->>Inv: 1. Reserve Stock
+    Inv-->>Saga: Stock Reserved
+
+    Saga->>Pay: 2. Charge Payment
+    Pay-->>Saga: Payment Failed!
+
+    Note over Saga: Compensation begins
+
+    Saga->>Inv: 3. Release Stock (compensate)
+    Inv-->>Saga: Stock Released
+
+    Saga->>Saga: Report failure to user

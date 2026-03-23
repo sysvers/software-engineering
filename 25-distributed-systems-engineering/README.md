@@ -1,5 +1,12 @@
 # Topic 25: Distributed Systems Engineering
 
+## Diagrams
+
+![Consistent Hashing](diagrams/consistent-hashing.png)
+
+![Replication Topologies](diagrams/replication-topologies.png)
+
+
 Distributed systems engineering is the discipline of designing, building, and operating software that runs across multiple networked machines and coordinates work to appear as a single coherent system. It is one of the most challenging areas of software engineering because the network is fundamentally unreliable, clocks drift, nodes fail independently, and partial failures are the norm rather than the exception. Mastering distributed systems requires a deep understanding of consistency models, fault tolerance patterns, and the inherent trade-offs articulated by results like the CAP theorem and the FLP impossibility result.
 
 ---

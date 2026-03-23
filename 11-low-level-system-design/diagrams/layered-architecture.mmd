@@ -1,0 +1,29 @@
+graph TB
+    subgraph "HTTP Layer (api/)"
+        Handlers[Handlers] --> DTOs[Request/Response DTOs]
+    end
+
+    subgraph "Application Layer (application/)"
+        UseCases[Use Cases / Services]
+    end
+
+    subgraph "Domain Layer (domain/)"
+        Entities[Entities & Value Objects]
+        DomainErrors[Domain Errors]
+        Traits[Repository Traits]
+    end
+
+    subgraph "Infrastructure Layer (infrastructure/)"
+        Repos[Repository Implementations]
+        ExtAPI[External API Clients]
+        DB[(Database)]
+    end
+
+    Handlers --> UseCases
+    UseCases --> Entities
+    UseCases --> Traits
+    Repos -.->|implements| Traits
+    Repos --> DB
+
+    style Entities fill:#2ecc71,color:#fff
+    style Traits fill:#2ecc71,color:#fff

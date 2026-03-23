@@ -1,5 +1,12 @@
 # 16 - Event-Driven Architecture & CQRS
 
+## Diagrams
+
+![CQRS Pattern](diagrams/cqrs-pattern.png)
+
+![Saga Pattern](diagrams/saga-pattern.png)
+
+
 ## Concepts
 
 ### Event-Driven Architecture (EDA)

@@ -1,5 +1,12 @@
 # 18 - Software Configuration Management
 
+## Diagrams
+
+![Config Hierarchy](diagrams/config-hierarchy.png)
+
+![Feature Flag Lifecycle](diagrams/feature-flag-lifecycle.png)
+
+
 ## Concepts
 
 ### What is Configuration Management?

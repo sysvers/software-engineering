@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant User as User Browser
+    participant App as Your App
+    participant Auth as Auth Provider
+    participant API as Your API
+
+    User->>App: 1. Click "Login"
+    App->>Auth: 2. Redirect to /authorize
+    Auth->>User: 3. Login & Consent screen
+    User->>Auth: 4. Grant access
+    Auth->>App: 5. Redirect with auth code
+    App->>Auth: 6. POST /token (code + client_secret)
+    Auth->>App: 7. Access token + Refresh token
+    App->>API: 8. API request with Bearer token
+    API->>App: 9. Protected resource

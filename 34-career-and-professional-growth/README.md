@@ -1,5 +1,10 @@
 # Topic 34: Career & Professional Growth
 
+## Diagrams
+
+![Career Tracks](diagrams/career-tracks.png)
+
+
 ## Concepts
 
 ### IC vs Management Track

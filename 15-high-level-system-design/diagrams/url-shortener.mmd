@@ -1,0 +1,9 @@
+graph LR
+    Client[Client] --> CDN[CDN<br/>Cached Redirects]
+    CDN --> LB[Load Balancer]
+    LB --> API1[API Server 1]
+    LB --> API2[API Server 2]
+    API1 --> Cache[(Redis Cache)]
+    API2 --> Cache
+    API1 --> DB[(PostgreSQL)]
+    API2 --> DB

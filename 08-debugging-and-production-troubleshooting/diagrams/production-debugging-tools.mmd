@@ -1,0 +1,15 @@
+graph LR
+    subgraph "Production Debugging Toolkit"
+        Logs[Structured Logs<br/>Search & Filter]
+        Traces[Distributed Traces<br/>Follow Request Path]
+        Metrics[Metrics & Dashboards<br/>Spot Anomalies]
+        CoreDump[Core Dumps<br/>Post-Mortem Analysis]
+        Flags[Feature Flags<br/>Disable Suspect Feature]
+        Debug[Debug Endpoints<br/>Expose Internal State]
+    end
+
+    Incident[Production Incident] --> Metrics
+    Metrics --> Logs
+    Logs --> Traces
+    Traces --> CoreDump
+    Incident --> Flags

@@ -1,5 +1,12 @@
 # Topic 24: Performance Engineering
 
+## Diagrams
+
+![Memory Layout](diagrams/memory-layout.png)
+
+![Optimization Workflow](diagrams/optimization-workflow.png)
+
+
 Performance engineering is the discipline of designing, measuring, and optimizing software systems to meet specific throughput, latency, and resource utilization targets. Unlike ad-hoc optimization -- where developers chase bottlenecks after complaints roll in -- performance engineering treats performance as a first-class requirement from the earliest stages of design through production operations.
 
 This topic covers the full spectrum: from micro-benchmarks of individual functions to system-wide load testing, from CPU cache behavior to database query plans, and from frontend rendering metrics to backend SLA compliance.

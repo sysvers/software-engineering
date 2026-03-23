@@ -1,0 +1,12 @@
+graph LR
+    A[Alert Fires] --> B[Acknowledge<br/>within 5 min]
+    B --> C[Assess Severity<br/>P1/P2/P3/P4]
+    C --> D[Assign Incident<br/>Commander]
+    D --> E[Diagnose<br/>Logs, Traces, Metrics]
+    E --> F[Mitigate<br/>Rollback, Feature Flag, Scale]
+    F --> G[Verify Resolution]
+    G --> H[Write Post-Mortem]
+    H --> I[Track Action Items]
+
+    style A fill:#e74c3c,color:#fff
+    style G fill:#2ecc71,color:#fff

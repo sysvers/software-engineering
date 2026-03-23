@@ -1,0 +1,10 @@
+graph TB
+    E2E["E2E Tests<br/>(Few, Slow, Expensive)"]
+    INT["Integration Tests<br/>(Some, Moderate)"]
+    UNIT["Unit Tests<br/>(Many, Fast, Cheap)"]
+
+    E2E --- INT --- UNIT
+
+    style E2E fill:#ff6b6b,color:#fff
+    style INT fill:#ffd93d,color:#333
+    style UNIT fill:#6bcb77,color:#fff

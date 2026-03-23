@@ -1,5 +1,10 @@
 # 23 - Infrastructure Security
 
+## Diagrams
+
+![Zero Trust](diagrams/zero-trust.png)
+
+
 ## Concepts
 
 ### Network Security

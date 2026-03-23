@@ -1,0 +1,24 @@
+gantt
+    title Distributed Trace - Order Request
+    dateFormat X
+    axisFormat %L ms
+
+    section API Gateway
+    Parse & Route           :0, 5
+
+    section Order Service
+    Validate Order          :5, 15
+    Check Inventory (gRPC)  :15, 45
+
+    section Inventory Service
+    Query Database          :20, 40
+
+    section Order Service
+    Process Payment         :45, 80
+
+    section Payment Service
+    Charge Card (External)  :50, 75
+
+    section Order Service
+    Save Order              :80, 95
+    Send Response           :95, 100

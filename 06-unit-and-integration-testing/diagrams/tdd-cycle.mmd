@@ -1,0 +1,8 @@
+graph LR
+    RED["🔴 Red<br/>Write Failing Test"] --> GREEN["🟢 Green<br/>Make It Pass"]
+    GREEN --> REFACTOR["🔵 Refactor<br/>Clean Up"]
+    REFACTOR --> RED
+
+    style RED fill:#e74c3c,color:#fff
+    style GREEN fill:#2ecc71,color:#fff
+    style REFACTOR fill:#3498db,color:#fff

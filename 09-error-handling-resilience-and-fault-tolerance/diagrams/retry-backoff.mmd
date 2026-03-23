@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant Client
+    participant Service
+
+    Client->>Service: Request (Attempt 1)
+    Service-->>Client: 500 Error
+
+    Note over Client: Wait ~100ms + jitter
+
+    Client->>Service: Request (Attempt 2)
+    Service-->>Client: 500 Error
+
+    Note over Client: Wait ~400ms + jitter
+
+    Client->>Service: Request (Attempt 3)
+    Service-->>Client: 200 OK

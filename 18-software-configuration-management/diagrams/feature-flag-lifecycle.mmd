@@ -1,0 +1,11 @@
+graph LR
+    A[Create Flag<br/>disabled] --> B[Deploy Code<br/>Behind Flag]
+    B --> C[Enable for<br/>Internal Testing]
+    C --> D[Roll Out<br/>10% → 50% → 100%]
+    D --> E[Flag Fully On]
+    E --> F[Remove Flag<br/>& Old Code Path]
+
+    style A fill:#e74c3c,color:#fff
+    style D fill:#ffd93d,color:#333
+    style E fill:#2ecc71,color:#fff
+    style F fill:#3498db,color:#fff

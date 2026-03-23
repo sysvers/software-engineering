@@ -1,0 +1,12 @@
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: Failure threshold exceeded
+    Open --> HalfOpen: Timeout expires
+    HalfOpen --> Closed: Test request succeeds
+    HalfOpen --> Open: Test request fails
+
+    Closed: Requests flow normally
+    Closed: Failures are counted
+    Open: Requests fail immediately
+    Open: No calls to downstream
+    HalfOpen: Allow one test request

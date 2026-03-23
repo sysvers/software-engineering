@@ -1,5 +1,12 @@
 # 13 - Software Architecture
 
+## Diagrams
+
+![Bounded Contexts](diagrams/bounded-contexts.png)
+
+![Hexagonal Architecture](diagrams/hexagonal-architecture.png)
+
+
 ## Concepts
 
 ### What is Software Architecture?

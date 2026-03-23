@@ -1,0 +1,13 @@
+graph TD
+    Q1{Is it your core<br/>differentiator?}
+    Q1 -->|Yes| Build[BUILD<br/>Competitive advantage]
+    Q1 -->|No| Q2{Does a good<br/>solution exist?}
+    Q2 -->|Yes| Q3{Can you afford<br/>the vendor?}
+    Q3 -->|Yes| Buy[BUY<br/>Focus on core business]
+    Q3 -->|No| OSS[Use Open Source<br/>+ Customize]
+    Q2 -->|No| Build2[BUILD<br/>No alternative]
+
+    style Build fill:#3498db,color:#fff
+    style Build2 fill:#3498db,color:#fff
+    style Buy fill:#2ecc71,color:#fff
+    style OSS fill:#f39c12,color:#fff

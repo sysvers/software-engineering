@@ -1,5 +1,12 @@
 # Topic 30: Software Project Management & Team Dynamics
 
+## Diagrams
+
+![Kanban Board](diagrams/kanban-board.png)
+
+![Scrum Framework](diagrams/scrum-framework.png)
+
+
 Software project management is the discipline of planning, organizing, and directing the work of engineering teams to deliver software systems on time, within scope, and at acceptable quality. Team dynamics -- the behavioral patterns and interpersonal forces that shape how people collaborate -- are inseparable from project management because even the most rigorous process will fail if the humans executing it cannot communicate, trust each other, and resolve conflict effectively. This topic covers the methodologies, estimation techniques, metrics, and collaboration patterns that distinguish high-performing engineering organizations from dysfunctional ones.
 
 ---

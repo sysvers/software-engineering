@@ -1,5 +1,12 @@
 # 05 - Requirements Engineering
 
+## Diagrams
+
+![Requirement Types](diagrams/requirement-types.png)
+
+![Requirements Flow](diagrams/requirements-flow.png)
+
+
 ## Concepts
 
 ### What is Requirements Engineering?

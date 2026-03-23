@@ -1,5 +1,12 @@
 # 12 - API Design & Integration
 
+## Diagrams
+
+![API Styles Comparison](diagrams/api-styles-comparison.png)
+
+![OAuth2 Flow](diagrams/oauth2-flow.png)
+
+
 ## Concepts
 
 ### What is an API?

@@ -1,0 +1,13 @@
+graph LR
+    Push[Git Push] --> Build[Build]
+    Build --> Fmt[Format Check<br/>cargo fmt]
+    Fmt --> Lint[Lint<br/>cargo clippy]
+    Lint --> Test[Tests<br/>cargo nextest]
+    Test --> Audit[Security Audit<br/>cargo audit]
+    Audit -->|All Pass| Ready[Ready for Review]
+
+    Build -->|Fail| X1[❌]
+    Fmt -->|Fail| X2[❌]
+    Lint -->|Fail| X3[❌]
+    Test -->|Fail| X4[❌]
+    Audit -->|Fail| X5[❌]

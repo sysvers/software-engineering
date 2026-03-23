@@ -1,5 +1,12 @@
 # 10 - Design Patterns
 
+## Diagrams
+
+![Pattern Categories](diagrams/pattern-categories.png)
+
+![Strategy Pattern](diagrams/strategy-pattern.png)
+
+
 ## Concepts
 
 ### What are Design Patterns?
