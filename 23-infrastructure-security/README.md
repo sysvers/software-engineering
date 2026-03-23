@@ -111,6 +111,43 @@ async fn main() {
 }
 ```
 
+On the client side, configuring a TLS client that enforces certificate verification is equally important. Here is an example using `rustls` with `reqwest` to make HTTPS requests with strict certificate validation:
+
+```rust
+use reqwest::Client;
+use rustls::{ClientConfig, RootCertStore};
+use std::sync::Arc;
+
+fn build_secure_client() -> Result<Client, Box<dyn std::error::Error>> {
+    // Load the system's trusted root certificates
+    let mut root_store = RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs()? {
+        root_store.add(cert)?;
+    }
+
+    let tls_config = ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let client = Client::builder()
+        .use_preconfigured_tls(tls_config)
+        // Enforce HTTPS -- refuse to follow HTTP redirects
+        .https_only(true)
+        // Set a reasonable timeout so connections do not hang indefinitely
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
+    Ok(client)
+}
+
+async fn fetch_data(client: &Client, url: &str) -> Result<String, reqwest::Error> {
+    let response = client.get(url).send().await?.error_for_status()?;
+    response.text().await
+}
+```
+
+The key detail is `https_only(true)` -- this ensures the client will never accidentally downgrade to plaintext HTTP, even if a server issues a redirect. Combined with the system root certificate store, this gives you a client that validates server identity and encrypts all traffic.
+
 ### Secrets Management
 
 Secrets -- API keys, database passwords, TLS private keys, signing tokens -- must never be stored in source code, environment variables baked into images, or configuration files committed to version control.
@@ -131,6 +168,80 @@ Secrets -- API keys, database passwords, TLS private keys, signing tokens -- mus
 - Audit every access to a secret -- who read it, when, from where.
 - Use short-lived credentials. A database password that expires in one hour is far less dangerous if leaked than one that never expires.
 - Never log secrets. Implement redaction in your logging pipeline.
+
+Even when using environment variables (levels 1-2 in the maturity table above), you should validate that all required secrets are present and well-formed at startup rather than discovering a missing secret at runtime when a request fails. Here is a pattern for loading and validating secrets from environment variables:
+
+```rust
+use std::env;
+
+#[derive(Debug, Clone)]
+pub struct AppSecrets {
+    pub database_url: String,
+    pub jwt_signing_key: String,
+    pub api_key: String,
+}
+
+impl AppSecrets {
+    /// Load all required secrets from environment variables at startup.
+    /// Panics with a clear message if any secret is missing or invalid.
+    /// Call this once during initialization -- fail fast, not at request time.
+    pub fn from_env() -> Self {
+        let mut errors: Vec<String> = Vec::new();
+
+        let database_url = require_env("DATABASE_URL", &mut errors);
+        let jwt_signing_key = require_env("JWT_SIGNING_KEY", &mut errors);
+        let api_key = require_env("API_KEY", &mut errors);
+
+        // Validate format constraints, not just presence
+        if let Some(ref url) = database_url {
+            if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
+                errors.push(
+                    "DATABASE_URL must start with postgres:// or postgresql://".to_string(),
+                );
+            }
+        }
+
+        if let Some(ref key) = jwt_signing_key {
+            if key.len() < 32 {
+                errors.push(
+                    "JWT_SIGNING_KEY must be at least 32 characters".to_string(),
+                );
+            }
+        }
+
+        if !errors.is_empty() {
+            // Log every problem at once so operators can fix them all in one pass
+            eprintln!("FATAL: missing or invalid configuration:");
+            for err in &errors {
+                eprintln!("  - {err}");
+            }
+            std::process::exit(1);
+        }
+
+        AppSecrets {
+            database_url: database_url.unwrap(),
+            jwt_signing_key: jwt_signing_key.unwrap(),
+            api_key: api_key.unwrap(),
+        }
+    }
+}
+
+fn require_env(name: &str, errors: &mut Vec<String>) -> Option<String> {
+    match env::var(name) {
+        Ok(val) if val.is_empty() => {
+            errors.push(format!("{name} is set but empty"));
+            None
+        }
+        Ok(val) => Some(val),
+        Err(_) => {
+            errors.push(format!("{name} is not set"));
+            None
+        }
+    }
+}
+```
+
+This approach collects all configuration errors and reports them together, so an operator does not have to fix and redeploy one variable at a time. In production, replace this pattern with a proper secrets manager (level 3+).
 
 Example of fetching a secret from AWS Secrets Manager in Rust:
 
@@ -306,6 +417,85 @@ The traditional security model is "castle and moat": everything inside the netwo
 - Short-lived, scoped tokens (e.g., SPIFFE/SPIRE for workload identity).
 - Network micro-segmentation (each service can only reach the specific services it needs).
 - Continuous authorization, not just authentication at the perimeter.
+
+In practice, "verify every request" often means validating a signed token (such as a JWT) on every incoming request. Here is a middleware for `axum` that validates JWT tokens and extracts claims, rejecting any request that lacks a valid token:
+
+```rust
+use axum::{
+    extract::Request,
+    http::{header, StatusCode},
+    middleware::Next,
+    response::Response,
+    Extension,
+};
+use jsonwebtoken::{decode, DecodingKey, TokenData, Validation, Algorithm};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Claims {
+    /// Subject -- who the token was issued to (user ID or service name)
+    pub sub: String,
+    /// Expiration time (UTC timestamp)
+    pub exp: usize,
+    /// Issued-at time (UTC timestamp)
+    pub iat: usize,
+    /// Scopes or permissions granted to this token
+    pub scopes: Vec<String>,
+}
+
+/// Middleware that extracts and validates a JWT from the Authorization header.
+/// On success, injects the decoded `Claims` as a request extension so
+/// downstream handlers can inspect identity and scopes without re-parsing.
+pub async fn require_auth(
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let auth_header = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let decoding_key = DecodingKey::from_secret(
+        std::env::var("JWT_SIGNING_KEY")
+            .expect("JWT_SIGNING_KEY must be set")
+            .as_bytes(),
+    );
+
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.validate_exp = true;
+    // Require the "sub" claim to be present
+    validation.set_required_spec_claims(&["sub", "exp", "iat"]);
+
+    let token_data: TokenData<Claims> = decode(token, &decoding_key, &validation)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Make claims available to downstream handlers via Extension
+    request.extensions_mut().insert(token_data.claims);
+
+    Ok(next.run(request).await)
+}
+
+// Usage with axum Router:
+//
+//   use axum::{routing::get, middleware, Router};
+//
+//   let app = Router::new()
+//       .route("/api/protected", get(protected_handler))
+//       .layer(middleware::from_fn(require_auth));
+//
+//   async fn protected_handler(
+//       Extension(claims): Extension<Claims>,
+//   ) -> String {
+//       format!("Hello, {}. Your scopes: {:?}", claims.sub, claims.scopes)
+//   }
+```
+
+This middleware enforces authentication at the application layer. In a zero-trust architecture, every service runs this kind of validation independently -- it does not rely on the network perimeter or an upstream gateway having already checked the token.
 
 ### Security Incident Response
 
