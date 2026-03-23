@@ -43,6 +43,81 @@ Cloud-Native Architecture:
 
 **Designing for failure** is central to cloud-native thinking. Every network call can fail, every instance can be terminated, every region can go down. Your application must handle all of these gracefully.
 
+**Treating backing services as attached resources** (principle #4) means your code interacts with cloud services through SDKs and configuration, not hardcoded paths or local file systems. Here is a Rust example using Amazon S3 as an object store:
+
+```rust
+// Example: S3 client for upload and download using the aws-sdk-s3 crate
+// Cargo.toml dependencies:
+//   aws-config = "1"
+//   aws-sdk-s3 = "1"
+//   tokio = { version = "1", features = ["full"] }
+
+use aws_sdk_s3::Client;
+use aws_sdk_s3::primitives::ByteStream;
+use std::path::Path;
+
+async fn create_s3_client() -> Client {
+    // Loads credentials and region from environment variables,
+    // IAM roles, or ~/.aws/config -- never hardcode credentials
+    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    Client::new(&config)
+}
+
+async fn upload_object(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    file_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let body = ByteStream::from_path(file_path).await?;
+
+    client
+        .put_object()
+        .bucket(bucket)
+        .key(key)
+        .body(body)
+        .send()
+        .await?;
+
+    println!("Uploaded {} to s3://{}/{}", file_path.display(), bucket, key);
+    Ok(())
+}
+
+async fn download_object(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let resp = client
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await?;
+
+    let bytes = resp.body.collect().await?.into_bytes().to_vec();
+    println!("Downloaded {} bytes from s3://{}/{}", bytes.len(), bucket, key);
+    Ok(bytes)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = create_s3_client().await;
+
+    // The bucket name comes from config/environment -- not hardcoded
+    let bucket = std::env::var("STORAGE_BUCKET")
+        .expect("STORAGE_BUCKET environment variable required");
+
+    upload_object(&client, &bucket, "reports/2026-q1.csv", Path::new("report.csv")).await?;
+    let data = download_object(&client, &bucket, "reports/2026-q1.csv").await?;
+
+    println!("Retrieved {} bytes", data.len());
+    Ok(())
+}
+```
+
+Notice how the bucket name comes from an environment variable (principle #3), the credentials are resolved automatically via the SDK (IAM roles in production, local config in development), and S3 is treated as an interchangeable backing service -- you could swap it for MinIO or another S3-compatible store without changing application logic.
+
 ### Serverless Architecture
 
 Serverless does not mean "no servers" -- it means you do not manage or think about servers. The cloud provider handles provisioning, scaling, patching, and availability.
@@ -80,6 +155,61 @@ async fn handler(event: LambdaEvent<Request>) -> Result<Response, Error> {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     lambda_runtime::run(service_fn(handler)).await
+}
+```
+
+A more complete pattern handles API Gateway events, extracts path parameters, and returns structured HTTP responses. This is the most common real-world Lambda deployment:
+
+```rust
+// Example: API Gateway HTTP handler using lambda_runtime + lambda_http
+// Cargo.toml dependencies:
+//   lambda_http = "0.13"
+//   lambda_runtime = "0.13"
+//   serde = { version = "1", features = ["derive"] }
+//   serde_json = "1"
+//   tokio = { version = "1", features = ["macros"] }
+
+use lambda_http::{run, service_fn, Body, Error, Request, Response};
+use lambda_http::request::RequestContext;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct ApiResponse {
+    message: String,
+    item_id: String,
+}
+
+async fn handler(event: Request) -> Result<Response<Body>, Error> {
+    // Extract path parameters from the API Gateway event
+    let path = event.uri().path().to_string();
+    let item_id = path
+        .split('/')
+        .last()
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Business logic goes here -- the function is stateless,
+    // so any state lives in a backing service (DynamoDB, RDS, etc.)
+    let response_body = ApiResponse {
+        message: format!("Retrieved item {}", item_id),
+        item_id,
+    };
+
+    let resp = Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(serde_json::to_string(&response_body)?.into())
+        .map_err(Box::new)?;
+
+    Ok(resp)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    // Initialize shared resources here (DB connections, SDK clients).
+    // This code runs once per cold start, not per invocation.
+    // Reusing connections across invocations is critical for performance.
+    run(service_fn(handler)).await
 }
 ```
 
