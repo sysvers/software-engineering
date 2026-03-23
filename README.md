@@ -20,10 +20,10 @@ Topics are numbered and ordered from foundational to advanced. Each topic lives 
 
 ```
 XX-topic-name/
-├── README.md            # Concepts, business value, real-world examples,
-│                        # common mistakes, trade-offs, when to use,
-│                        # key takeaways, further reading
-└── examples/            # Code examples in Rust (and Svelte if needed)
+└── README.md            # Concepts, business value, real-world examples,
+                         # common mistakes, trade-offs, when to use,
+                         # key takeaways, further reading
+                         # (Rust code examples are inline)
 ```
 
 Work through them in order, or jump to any topic that interests you.
