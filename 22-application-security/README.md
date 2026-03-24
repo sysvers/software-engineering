@@ -1,4 +1,4 @@
-# 22 - Application Security
+# Application Security
 
 ## Diagrams
 

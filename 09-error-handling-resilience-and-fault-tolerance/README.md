@@ -1,4 +1,4 @@
-# 09 - Error Handling, Resilience & Fault Tolerance
+# Error Handling, Resilience & Fault Tolerance
 
 ## Diagrams
 

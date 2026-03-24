@@ -1,4 +1,4 @@
-# 21 - Observability & Monitoring
+# Observability & Monitoring
 
 ## Diagrams
 

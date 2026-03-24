@@ -1,4 +1,4 @@
-# Topic 34: Career & Professional Growth
+# Career & Professional Growth
 
 ## Diagrams
 

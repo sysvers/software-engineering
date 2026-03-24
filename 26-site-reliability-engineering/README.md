@@ -1,4 +1,4 @@
-# Topic 26: Site Reliability Engineering (SRE)
+# Site Reliability Engineering (SRE)
 
 ## Diagrams
 

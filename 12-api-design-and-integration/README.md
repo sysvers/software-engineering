@@ -1,4 +1,4 @@
-# 12 - API Design & Integration
+# API Design & Integration
 
 ## Diagrams
 

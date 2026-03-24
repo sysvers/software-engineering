@@ -1,4 +1,4 @@
-# Topic 32: Compliance & Regulatory Engineering
+# Compliance & Regulatory Engineering
 
 ## Diagrams
 

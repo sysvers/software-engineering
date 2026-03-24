@@ -1,4 +1,4 @@
-# 19 - CI/CD & Deployment
+# CI/CD & Deployment
 
 ## Diagrams
 

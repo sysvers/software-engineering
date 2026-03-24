@@ -1,4 +1,4 @@
-# Topic 33: Open Source & Inner Source
+# Open Source & Inner Source
 
 ## Diagrams
 

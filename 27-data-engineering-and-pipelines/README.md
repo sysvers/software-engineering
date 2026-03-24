@@ -1,4 +1,4 @@
-# Topic 27: Data Engineering & Pipelines
+# Data Engineering & Pipelines
 
 ## Diagrams
 

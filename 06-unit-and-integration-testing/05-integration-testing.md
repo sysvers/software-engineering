@@ -1,4 +1,4 @@
-# 05 - Integration Testing
+# Integration Testing
 
 ## What Integration Tests Verify
 

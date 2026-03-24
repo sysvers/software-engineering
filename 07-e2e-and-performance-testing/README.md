@@ -1,4 +1,4 @@
-# 07 - End-to-End & Performance Testing
+# End-to-End & Performance Testing
 
 ## Sub-documents
 

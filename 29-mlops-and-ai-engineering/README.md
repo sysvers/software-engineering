@@ -1,4 +1,4 @@
-# Topic 29: MLOps & AI Engineering
+# MLOps & AI Engineering
 
 ## Diagrams
 

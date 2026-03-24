@@ -1,4 +1,4 @@
-# 02 - Clean Code & Software Craftsmanship
+# Clean Code & Software Craftsmanship
 
 ## Diagrams
 

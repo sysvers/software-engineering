@@ -1,4 +1,4 @@
-# 11 - Low-Level System Design
+# Low-Level System Design
 
 ## Diagrams
 

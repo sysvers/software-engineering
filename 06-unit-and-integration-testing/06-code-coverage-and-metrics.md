@@ -1,4 +1,4 @@
-# 06 - Code Coverage and Metrics
+# Code Coverage and Metrics
 
 ## What Code Coverage Measures
 

@@ -1,4 +1,4 @@
-# 04 - Documentation Engineering
+# Documentation Engineering
 
 ## Diagrams
 

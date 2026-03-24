@@ -1,4 +1,4 @@
-# 23 - Infrastructure Security
+# Infrastructure Security
 
 ## Diagrams
 

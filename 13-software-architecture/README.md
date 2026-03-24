@@ -1,4 +1,4 @@
-# 13 - Software Architecture
+# Software Architecture
 
 ## Diagrams
 

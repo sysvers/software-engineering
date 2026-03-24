@@ -1,4 +1,4 @@
-# 17 - Build Systems, Tooling & Developer Experience
+# Build Systems, Tooling & Developer Experience
 
 ## Diagrams
 

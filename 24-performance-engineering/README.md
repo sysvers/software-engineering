@@ -1,4 +1,4 @@
-# Topic 24: Performance Engineering
+# Performance Engineering
 
 ## Diagrams
 

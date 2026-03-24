@@ -1,4 +1,4 @@
-# 10 - Design Patterns
+# Design Patterns
 
 ## Diagrams
 

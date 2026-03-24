@@ -1,4 +1,4 @@
-# Topic 30: Software Project Management & Team Dynamics
+# Software Project Management & Team Dynamics
 
 ## Diagrams
 

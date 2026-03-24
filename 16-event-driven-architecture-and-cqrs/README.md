@@ -1,4 +1,4 @@
-# 16 - Event-Driven Architecture & CQRS
+# Event-Driven Architecture & CQRS
 
 ## Contents
 

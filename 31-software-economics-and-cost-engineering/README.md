@@ -1,4 +1,4 @@
-# Topic 31: Software Economics & Cost Engineering
+# Software Economics & Cost Engineering
 
 ## Diagrams
 

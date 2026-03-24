@@ -1,4 +1,4 @@
-# 18 - Software Configuration Management
+# Software Configuration Management
 
 ## Diagrams
 

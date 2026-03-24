@@ -1,4 +1,4 @@
-# 20 - Cloud Engineering & Infrastructure
+# Cloud Engineering & Infrastructure
 
 ## Diagrams
 

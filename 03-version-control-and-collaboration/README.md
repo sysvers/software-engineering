@@ -1,4 +1,4 @@
-# 03 - Version Control & Collaboration
+# Version Control & Collaboration
 
 ## Diagrams
 

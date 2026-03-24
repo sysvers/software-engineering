@@ -1,4 +1,4 @@
-# 01 - Unit Testing Fundamentals
+# Unit Testing Fundamentals
 
 ## What Is a Unit Test?
 

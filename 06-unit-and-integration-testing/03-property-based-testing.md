@@ -1,4 +1,4 @@
-# 03 - Property-Based Testing
+# Property-Based Testing
 
 ## The Limits of Example-Based Testing
 

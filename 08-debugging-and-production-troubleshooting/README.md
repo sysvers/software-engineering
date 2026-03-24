@@ -1,4 +1,4 @@
-# 08 - Debugging & Production Troubleshooting
+# Debugging & Production Troubleshooting
 
 ## Diagrams
 

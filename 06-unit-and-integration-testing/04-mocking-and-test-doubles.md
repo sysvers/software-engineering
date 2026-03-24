@@ -1,4 +1,4 @@
-# 04 - Mocking and Test Doubles
+# Mocking and Test Doubles
 
 ## Why Test Doubles Exist
 

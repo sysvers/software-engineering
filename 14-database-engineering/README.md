@@ -1,4 +1,4 @@
-# 14 - Database Engineering
+# Database Engineering
 
 ## Sub-documents
 

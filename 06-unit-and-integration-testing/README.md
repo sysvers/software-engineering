@@ -1,4 +1,4 @@
-# 06 - Unit & Integration Testing
+# Unit & Integration Testing
 
 This topic covers the full spectrum of testing in software engineering, from isolated unit tests through integration tests that verify real system behavior. All examples use Rust.
 

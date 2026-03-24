@@ -1,4 +1,4 @@
-# Topic 25: Distributed Systems Engineering
+# Distributed Systems Engineering
 
 ## Diagrams
 

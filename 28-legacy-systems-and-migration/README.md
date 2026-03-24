@@ -1,4 +1,4 @@
-# Topic 28: Legacy Systems & Migration
+# Legacy Systems & Migration
 
 ## Diagrams
 
