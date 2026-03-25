@@ -50,20 +50,18 @@ Every unit test should follow three distinct phases:
 2. **Act** — call the function or method under test (usually a single line)
 3. **Assert** — verify the outcome matches expectations
 
-```rust
-#[test]
-fn deactivated_user_cannot_place_order() {
+```text
+TEST deactivated_user_cannot_place_order
     // Arrange — set up the test data
-    let user = User { id: 1, active: false };
-    let order = Order::new(vec![Item::new("Widget", 9.99)]);
+    user ← User { id: 1, active: false }
+    order ← NEW Order([NEW Item("Widget", 9.99)])
 
     // Act — perform the action being tested
-    let result = place_order(&user, &order);
+    result ← PLACE_ORDER(user, order)
 
     // Assert — verify the expected outcome
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), OrderError::InactiveUser);
-}
+    ASSERT result IS error
+    ASSERT result.error = OrderError::InactiveUser
 ```
 
 The AAA pattern makes tests scannable. A reviewer can glance at any test and immediately understand the scenario, the action, and the expected result. Avoid mixing phases — do not assert in the middle of arrangement, and do not perform multiple unrelated actions.
@@ -76,28 +74,25 @@ Test names are documentation. When a test fails in CI, the name is often the fir
 
 **Effective naming patterns:**
 
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
+```text
+TEST MODULE (only compiled during testing)
 
     // Pattern: <scenario>_<expected_result>
-    #[test]
-    fn empty_cart_has_zero_total() { /* ... */ }
+    TEST empty_cart_has_zero_total
+        // ...
 
-    #[test]
-    fn expired_coupon_is_rejected() { /* ... */ }
+    TEST expired_coupon_is_rejected
+        // ...
 
-    #[test]
-    fn negative_quantity_returns_validation_error() { /* ... */ }
+    TEST negative_quantity_returns_validation_error
+        // ...
 
     // Anti-pattern: meaningless names
-    #[test]
-    fn test1() { /* ... */ }  // What does this test?
+    TEST test1
+        // ...    // What does this test?
 
-    #[test]
-    fn test_calculate_discount() { /* ... */ }  // Which behavior of calculate_discount?
-}
+    TEST test_calculate_discount
+        // ...    // Which behavior of calculate_discount?
 ```
 
 When a test named `expired_coupon_is_rejected` fails, you know the coupon expiration logic is broken. When `test_calculate_discount_3` fails, you have to read the test body to figure out what went wrong.
@@ -108,49 +103,34 @@ When a test named `expired_coupon_is_rejected` fails, you know the coupon expira
 
 Rust has first-class testing support. The `#[test]` attribute marks a function as a test. The `#[cfg(test)]` attribute on a module ensures the test code is only compiled when running `cargo test` — it is stripped from release builds.
 
-```rust
-// src/pricing.rs
-pub fn calculate_discount(price: f64, discount_percent: f64) -> f64 {
-    if discount_percent < 0.0 || discount_percent > 100.0 {
-        return price;
-    }
-    price * (1.0 - discount_percent / 100.0)
-}
+```text
+// src/pricing
+FUNCTION CALCULATE_DISCOUNT(price: float, discount_percent: float) → float
+    IF discount_percent < 0.0 OR discount_percent > 100.0
+        RETURN price
+    RETURN price * (1.0 - discount_percent / 100.0)
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+TEST MODULE (only compiled during testing)
 
-    #[test]
-    fn applies_percentage_discount() {
-        let result = calculate_discount(100.0, 20.0);
-        assert!((result - 80.0).abs() < f64::EPSILON);
-    }
+    TEST applies_percentage_discount
+        result ← CALCULATE_DISCOUNT(100.0, 20.0)
+        ASSERT |result - 80.0| < EPSILON
 
-    #[test]
-    fn zero_discount_returns_original_price() {
-        let result = calculate_discount(50.0, 0.0);
-        assert!((result - 50.0).abs() < f64::EPSILON);
-    }
+    TEST zero_discount_returns_original_price
+        result ← CALCULATE_DISCOUNT(50.0, 0.0)
+        ASSERT |result - 50.0| < EPSILON
 
-    #[test]
-    fn full_discount_returns_zero() {
-        let result = calculate_discount(100.0, 100.0);
-        assert!((result - 0.0).abs() < f64::EPSILON);
-    }
+    TEST full_discount_returns_zero
+        result ← CALCULATE_DISCOUNT(100.0, 100.0)
+        ASSERT |result - 0.0| < EPSILON
 
-    #[test]
-    fn negative_discount_returns_original_price() {
-        let result = calculate_discount(100.0, -10.0);
-        assert!((result - 100.0).abs() < f64::EPSILON);
-    }
+    TEST negative_discount_returns_original_price
+        result ← CALCULATE_DISCOUNT(100.0, -10.0)
+        ASSERT |result - 100.0| < EPSILON
 
-    #[test]
-    fn discount_over_100_returns_original_price() {
-        let result = calculate_discount(100.0, 150.0);
-        assert!((result - 100.0).abs() < f64::EPSILON);
-    }
-}
+    TEST discount_over_100_returns_original_price
+        result ← CALCULATE_DISCOUNT(100.0, 150.0)
+        ASSERT |result - 100.0| < EPSILON
 ```
 
 ### Assert Macros
@@ -165,16 +145,11 @@ Rust provides several built-in assert macros:
 
 All three accept an optional message as a trailing argument:
 
-```rust
-#[test]
-fn user_age_must_be_positive() {
-    let result = validate_age(-5);
-    assert!(
-        result.is_err(),
-        "Expected validation error for negative age, got: {:?}",
-        result
-    );
-}
+```text
+TEST user_age_must_be_positive
+    result ← VALIDATE_AGE(-5)
+    ASSERT result IS error,
+        "Expected validation error for negative age, got: " + result
 ```
 
 Custom assertion messages are invaluable when tests fail in CI. The default `assertion failed: result.is_err()` tells you nothing about *why*. A descriptive message saves debugging time.
@@ -183,33 +158,26 @@ Custom assertion messages are invaluable when tests fail in CI. The default `ass
 
 Tests can return `Result<(), E>` instead of panicking, enabling the `?` operator:
 
-```rust
-#[test]
-fn parse_config_from_valid_toml() -> Result<(), Box<dyn std::error::Error>> {
-    let toml = r#"
-        [server]
-        port = 8080
-        host = "localhost"
-    "#;
+```text
+TEST parse_config_from_valid_toml → Ok or Error
+    toml ← "[server]
+             port = 8080
+             host = \"localhost\""
 
-    let config = Config::from_toml(toml)?;
-    assert_eq!(config.server.port, 8080);
-    assert_eq!(config.server.host, "localhost");
-    Ok(())
-}
+    config ← CONFIG_FROM_TOML(toml)?
+    ASSERT config.server.port = 8080
+    ASSERT config.server.host = "localhost"
+    RETURN Ok
 ```
 
 ### `#[should_panic]` for Expected Failures
 
 When a function is supposed to panic on invalid input, use `#[should_panic]`:
 
-```rust
-#[test]
-#[should_panic(expected = "index out of bounds")]
-fn accessing_beyond_length_panics() {
-    let buffer = FixedBuffer::new(10);
-    buffer.get(15);  // Should panic
-}
+```text
+TEST accessing_beyond_length_panics [EXPECT PANIC: "index out of bounds"]
+    buffer ← NEW FixedBuffer(10)
+    buffer.GET(15)  // Should panic
 ```
 
 Always include the `expected` string to ensure the test fails for the right reason. Without it, any panic passes the test — including panics from unrelated bugs.
@@ -232,24 +200,20 @@ Google enforces test quality through tooling: their build system (Blaze/Bazel) c
 
 Tests should verify *what* code does, not *how* it does it internally. If you refactor a function's internals without changing its behavior, no tests should break.
 
-```rust
+```text
 // Bad: testing implementation detail (internal data structure order)
-#[test]
-fn cache_stores_items_in_insertion_order() {
-    let mut cache = Cache::new();
-    cache.insert("a", 1);
-    cache.insert("b", 2);
+TEST cache_stores_items_in_insertion_order
+    cache ← NEW Cache()
+    cache.INSERT("a", 1)
+    cache.INSERT("b", 2)
     // This breaks if we switch from Vec to HashMap internally
-    assert_eq!(cache.internal_items()[0].key, "a");
-}
+    ASSERT cache.INTERNAL_ITEMS()[0].key = "a"
 
 // Good: testing observable behavior
-#[test]
-fn cached_item_can_be_retrieved() {
-    let mut cache = Cache::new();
-    cache.insert("a", 1);
-    assert_eq!(cache.get("a"), Some(&1));
-}
+TEST cached_item_can_be_retrieved
+    cache ← NEW Cache()
+    cache.INSERT("a", 1)
+    ASSERT cache.GET("a") = Some(1)
 ```
 
 ### Testing Trivial Code
@@ -260,12 +224,12 @@ Do not write tests for simple getters, setters, or constructors with no logic. F
 
 Never use `assert_eq!` for floating-point results. Use epsilon-based comparison:
 
-```rust
+```text
 // Wrong: may fail due to floating-point representation
-assert_eq!(0.1 + 0.2, 0.3);
+ASSERT 0.1 + 0.2 = 0.3
 
 // Correct: epsilon comparison
-assert!((0.1_f64 + 0.2 - 0.3).abs() < f64::EPSILON);
+ASSERT |0.1 + 0.2 - 0.3| < EPSILON
 ```
 
 ## Key Takeaways

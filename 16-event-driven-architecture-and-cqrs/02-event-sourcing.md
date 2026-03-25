@@ -53,180 +53,109 @@ This is the event sourcing equivalent of optimistic locking. No row-level locks 
 
 ### Rust Event Store Implementation
 
-```rust
-use serde::{Serialize, Deserialize};
-use sqlx::PgPool;
-use uuid::Uuid;
+```text
+STRUCTURE StoredEvent:
+    aggregate_id ← UUID
+    aggregate_type ← string
+    event_type ← string
+    event_data ← JSON value
+    metadata ← optional JSON value
+    version ← integer
 
-#[derive(Clone, Debug)]
-struct StoredEvent {
-    aggregate_id: Uuid,
-    aggregate_type: String,
-    event_type: String,
-    event_data: serde_json::Value,
-    metadata: Option<serde_json::Value>,
-    version: i32,
-}
+STRUCTURE EventStore:
+    pool ← PgPool
 
-struct EventStore {
-    pool: PgPool,
-}
+/// Append new events for an aggregate, enforcing expected version.
+/// Returns an error if another writer has appended events since we last read.
+PROCEDURE APPEND(store, aggregate_id, aggregate_type, expected_version, events):
+    tx ← AWAIT BEGIN_TRANSACTION(store.pool)
 
-impl EventStore {
-    /// Append new events for an aggregate, enforcing expected version.
-    /// Returns an error if another writer has appended events since we last read.
-    async fn append(
-        &self,
-        aggregate_id: Uuid,
-        aggregate_type: &str,
-        expected_version: i32,
-        events: Vec<(String, serde_json::Value)>,
-    ) -> Result<(), EventStoreError> {
-        let mut tx = self.pool.begin().await?;
+    FOR EACH (i, (event_type, event_data)) IN ENUMERATE(events):
+        version ← expected_version + 1 + i
+        AWAIT EXECUTE tx:
+            "INSERT INTO events (aggregate_id, aggregate_type, event_type, event_data, version)
+             VALUES (aggregate_id, aggregate_type, event_type, event_data, version)"
+        IF unique constraint violation THEN
+            // A concurrent write happened
+            RETURN Error(ConcurrencyConflict)
 
-        for (i, (event_type, event_data)) in events.into_iter().enumerate() {
-            let version = expected_version + 1 + i as i32;
-            sqlx::query(
-                "INSERT INTO events (aggregate_id, aggregate_type, event_type, event_data, version)
-                 VALUES ($1, $2, $3, $4, $5)"
-            )
-            .bind(aggregate_id)
-            .bind(aggregate_type)
-            .bind(&event_type)
-            .bind(&event_data)
-            .bind(version)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| {
-                // Unique constraint violation means a concurrent write happened
-                if is_unique_violation(&e) {
-                    EventStoreError::ConcurrencyConflict
-                } else {
-                    EventStoreError::Database(e)
-                }
-            })?;
-        }
+    AWAIT COMMIT(tx)
 
-        tx.commit().await?;
-        Ok(())
-    }
+/// Load all events for an aggregate, ordered by version.
+PROCEDURE LOAD(store, aggregate_id):
+    events ← AWAIT QUERY store.pool:
+        "SELECT aggregate_id, aggregate_type, event_type, event_data, metadata, version
+         FROM events WHERE aggregate_id = aggregate_id ORDER BY version"
+    RETURN events
 
-    /// Load all events for an aggregate, ordered by version.
-    async fn load(&self, aggregate_id: Uuid) -> Result<Vec<StoredEvent>, EventStoreError> {
-        let events = sqlx::query_as!(
-            StoredEvent,
-            "SELECT aggregate_id, aggregate_type, event_type, event_data, metadata, version
-             FROM events WHERE aggregate_id = $1 ORDER BY version",
-            aggregate_id
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(events)
-    }
-
-    /// Load events after a specific version (used with snapshots).
-    async fn load_after_version(
-        &self,
-        aggregate_id: Uuid,
-        after_version: i32,
-    ) -> Result<Vec<StoredEvent>, EventStoreError> {
-        let events = sqlx::query_as!(
-            StoredEvent,
-            "SELECT aggregate_id, aggregate_type, event_type, event_data, metadata, version
-             FROM events WHERE aggregate_id = $1 AND version > $2 ORDER BY version",
-            aggregate_id, after_version
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(events)
-    }
-}
+/// Load events after a specific version (used with snapshots).
+PROCEDURE LOAD_AFTER_VERSION(store, aggregate_id, after_version):
+    events ← AWAIT QUERY store.pool:
+        "SELECT aggregate_id, aggregate_type, event_type, event_data, metadata, version
+         FROM events WHERE aggregate_id = aggregate_id AND version > after_version
+         ORDER BY version"
+    RETURN events
 ```
 
 ## Rebuilding Aggregates from Events
 
 The aggregate is the domain object whose state is derived entirely from its event history. Commands validate business rules against the current state and produce new events.
 
-```rust
-#[derive(Clone, Serialize, Deserialize)]
-enum BankAccountEvent {
-    Opened { account_id: Uuid, owner: String, initial_balance: Money },
-    Deposited { amount: Money, source: String },
-    Withdrawn { amount: Money, reason: String },
-    Frozen { reason: String },
-}
+```text
+ENUMERATION BankAccountEvent:
+    Opened { account_id, owner, initial_balance }
+    Deposited { amount, source }
+    Withdrawn { amount, reason }
+    Frozen { reason }
 
-struct BankAccount {
-    id: Uuid,
-    owner: String,
-    balance: Money,
-    is_frozen: bool,
-    version: i32,  // tracks the last applied event version
-}
+STRUCTURE BankAccount:
+    id ← UUID
+    owner ← string
+    balance ← Money
+    is_frozen ← boolean
+    version ← integer  // tracks the last applied event version
 
-impl BankAccount {
-    /// Rebuild state by replaying events from the store.
-    fn from_events(events: &[StoredEvent]) -> Option<Self> {
-        let mut account: Option<Self> = None;
+/// Rebuild state by replaying events from the store.
+PROCEDURE FROM_EVENTS(events):
+    account ← None
 
-        for stored in events {
-            let event: BankAccountEvent =
-                serde_json::from_value(stored.event_data.clone()).ok()?;
+    FOR EACH stored IN events:
+        event ← PARSE_JSON(stored.event_data) AS BankAccountEvent
 
-            match event {
-                BankAccountEvent::Opened { account_id, owner, initial_balance } => {
-                    account = Some(BankAccount {
-                        id: account_id,
-                        owner,
-                        balance: initial_balance,
-                        is_frozen: false,
-                        version: stored.version,
-                    });
+        MATCH event:
+            Opened { account_id, owner, initial_balance } →
+                account ← BankAccount {
+                    id ← account_id, owner ← owner,
+                    balance ← initial_balance, is_frozen ← false,
+                    version ← stored.version
                 }
-                BankAccountEvent::Deposited { amount, .. } => {
-                    if let Some(ref mut acc) = account {
-                        acc.balance += amount;
-                        acc.version = stored.version;
-                    }
-                }
-                BankAccountEvent::Withdrawn { amount, .. } => {
-                    if let Some(ref mut acc) = account {
-                        acc.balance -= amount;
-                        acc.version = stored.version;
-                    }
-                }
-                BankAccountEvent::Frozen { .. } => {
-                    if let Some(ref mut acc) = account {
-                        acc.is_frozen = true;
-                        acc.version = stored.version;
-                    }
-                }
-            }
-        }
+            Deposited { amount, ... } →
+                IF account IS present THEN
+                    account.balance ← account.balance + amount
+                    account.version ← stored.version
+            Withdrawn { amount, ... } →
+                IF account IS present THEN
+                    account.balance ← account.balance - amount
+                    account.version ← stored.version
+            Frozen { ... } →
+                IF account IS present THEN
+                    account.is_frozen ← true
+                    account.version ← stored.version
 
-        account
-    }
+    RETURN account
 
-    /// Command: validates business rules, produces events on success.
-    fn withdraw(&self, amount: Money, reason: String) -> Result<BankAccountEvent, AccountError> {
-        if self.is_frozen {
-            return Err(AccountError::AccountFrozen);
-        }
-        if amount > self.balance {
-            return Err(AccountError::InsufficientFunds);
-        }
-        Ok(BankAccountEvent::Withdrawn { amount, reason })
-    }
+/// Command: validates business rules, produces events on success.
+PROCEDURE WITHDRAW(account, amount, reason):
+    IF account.is_frozen THEN
+        RETURN Error(AccountFrozen)
+    IF amount > account.balance THEN
+        RETURN Error(InsufficientFunds)
+    RETURN Withdrawn { amount, reason }
 
-    fn deposit(&self, amount: Money, source: String) -> Result<BankAccountEvent, AccountError> {
-        if self.is_frozen {
-            return Err(AccountError::AccountFrozen);
-        }
-        Ok(BankAccountEvent::Deposited { amount, source })
-    }
-}
+PROCEDURE DEPOSIT(account, amount, source):
+    IF account.is_frozen THEN
+        RETURN Error(AccountFrozen)
+    RETURN Deposited { amount, source }
 ```
 
 ### The Command-Event Cycle
@@ -239,29 +168,18 @@ The full cycle for processing a command:
 4. If valid, append the resulting events to the store with the expected version.
 5. If a concurrency conflict occurs, reload and retry.
 
-```rust
-async fn handle_withdrawal(
-    store: &EventStore,
-    account_id: Uuid,
-    amount: Money,
-    reason: String,
-) -> Result<(), AccountError> {
-    let events = store.load(account_id).await?;
-    let account = BankAccount::from_events(&events)
-        .ok_or(AccountError::NotFound)?;
+```text
+PROCEDURE HANDLE_WITHDRAWAL(store, account_id, amount, reason):
+    events ← AWAIT LOAD(store, account_id)
+    account ← FROM_EVENTS(events)
+    IF account IS None THEN RETURN Error(NotFound)
 
-    let new_event = account.withdraw(amount, reason)?;
-    let event_data = serde_json::to_value(&new_event)?;
+    new_event ← WITHDRAW(account, amount, reason)
+    IF new_event IS error THEN RETURN error
+    event_data ← TO_JSON(new_event)
 
-    store.append(
-        account_id,
-        "BankAccount",
-        account.version,
-        vec![("Withdrawn".into(), event_data)],
-    ).await?;
-
-    Ok(())
-}
+    AWAIT APPEND(store, account_id, "BankAccount", account.version,
+        [("Withdrawn", event_data)])
 ```
 
 ## Real-World Examples

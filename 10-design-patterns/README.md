@@ -29,72 +29,42 @@ Creational patterns deal with object/struct creation, providing flexibility in *
 
 **Solution:** A separate builder struct that accumulates configuration and produces the final object.
 
-```rust
-pub struct HttpRequest {
-    url: String,
-    method: String,
-    headers: Vec<(String, String)>,
-    body: Option<String>,
-    timeout_ms: u64,
-}
+```text
+STRUCTURE HttpRequest
+    url: string
+    method: string
+    headers: list of (string, string)
+    body: optional string
+    timeout_ms: unsigned integer
 
-pub struct HttpRequestBuilder {
-    url: String,
-    method: String,
-    headers: Vec<(String, String)>,
-    body: Option<String>,
-    timeout_ms: u64,
-}
+STRUCTURE HttpRequestBuilder
+    url: string, method: string, headers: list, body: optional string, timeout_ms: unsigned integer
 
-impl HttpRequestBuilder {
-    pub fn new(url: &str) -> Self {
-        Self {
-            url: url.to_string(),
-            method: "GET".to_string(),
-            headers: vec![],
-            body: None,
-            timeout_ms: 30_000,
-        }
-    }
+    FUNCTION NEW(url: string) -> HttpRequestBuilder
+        RETURN HttpRequestBuilder { url, method: "GET", headers: [], body: None, timeout_ms: 30000 }
 
-    pub fn method(mut self, method: &str) -> Self {
-        self.method = method.to_string();
-        self
-    }
+    FUNCTION METHOD(self, method: string) -> self
+        self.method <- method; RETURN self
 
-    pub fn header(mut self, key: &str, value: &str) -> Self {
-        self.headers.push((key.to_string(), value.to_string()));
-        self
-    }
+    FUNCTION HEADER(self, key: string, value: string) -> self
+        APPEND (key, value) TO self.headers; RETURN self
 
-    pub fn body(mut self, body: &str) -> Self {
-        self.body = Some(body.to_string());
-        self
-    }
+    FUNCTION BODY(self, body: string) -> self
+        self.body <- Some(body); RETURN self
 
-    pub fn timeout(mut self, ms: u64) -> Self {
-        self.timeout_ms = ms;
-        self
-    }
+    FUNCTION TIMEOUT(self, ms: unsigned integer) -> self
+        self.timeout_ms <- ms; RETURN self
 
-    pub fn build(self) -> HttpRequest {
-        HttpRequest {
-            url: self.url,
-            method: self.method,
-            headers: self.headers,
-            body: self.body,
-            timeout_ms: self.timeout_ms,
-        }
-    }
-}
+    FUNCTION BUILD(self) -> HttpRequest
+        RETURN HttpRequest { url, method, headers, body, timeout_ms }
 
-// Usage — reads like a sentence
-let request = HttpRequestBuilder::new("https://api.example.com/users")
-    .method("POST")
-    .header("Content-Type", "application/json")
-    .body(r#"{"name": "Alice"}"#)
-    .timeout(5_000)
-    .build();
+// Usage -- reads like a sentence
+request <- HttpRequestBuilder.NEW("https://api.example.com/users")
+    .METHOD("POST")
+    .HEADER("Content-Type", "application/json")
+    .BODY('{"name": "Alice"}')
+    .TIMEOUT(5000)
+    .BUILD()
 ```
 
 **Where you see this in the real world:** `reqwest::Client::builder()`, `tokio::runtime::Builder`, `clap::Command::new()`.
@@ -105,27 +75,20 @@ let request = HttpRequestBuilder::new("https://api.example.com/users")
 
 **Solution:** A function or trait that returns a trait object based on input.
 
-```rust
-trait NotificationSender: Send + Sync {
-    fn send(&self, to: &str, message: &str) -> Result<(), SendError>;
-}
+```text
+INTERFACE NotificationSender
+    FUNCTION SEND(to: string, message: string) -> void or SendError
 
-struct EmailSender { /* ... */ }
-struct SmsSender { /* ... */ }
-struct SlackSender { /* ... */ }
+STRUCTURE EmailSender   // implements NotificationSender
+STRUCTURE SmsSender     // implements NotificationSender
+STRUCTURE SlackSender   // implements NotificationSender
 
-impl NotificationSender for EmailSender { /* ... */ }
-impl NotificationSender for SmsSender { /* ... */ }
-impl NotificationSender for SlackSender { /* ... */ }
-
-fn create_sender(channel: &str) -> Box<dyn NotificationSender> {
-    match channel {
-        "email" => Box::new(EmailSender::new()),
-        "sms" => Box::new(SmsSender::new()),
-        "slack" => Box::new(SlackSender::new()),
-        _ => panic!("Unknown channel: {channel}"),
-    }
-}
+FUNCTION CREATE_SENDER(channel: string) -> NotificationSender
+    MATCH channel
+        CASE "email": RETURN NEW EmailSender()
+        CASE "sms": RETURN NEW SmsSender()
+        CASE "slack": RETURN NEW SlackSender()
+        DEFAULT: ERROR "Unknown channel: " + channel
 ```
 
 #### Singleton (and Why It's Often an Anti-Pattern)
@@ -144,27 +107,22 @@ fn create_sender(channel: &str) -> Box<dyn NotificationSender> {
 - Use `Arc<T>` for shared ownership across threads
 - Use `once_cell::sync::Lazy` or `std::sync::OnceLock` for one-time initialization
 
-```rust
-use std::sync::OnceLock;
+```text
+GLOBAL CONFIG <- ONE-TIME initialized value
 
-static CONFIG: OnceLock<Config> = OnceLock::new();
+FUNCTION INIT_CONFIG(path: string)
+    config <- LOAD_CONFIG(path)
+    CONFIG.SET(config)  // Can only be set once
 
-fn init_config(path: &str) {
-    let config = load_config(path).expect("Failed to load config");
-    CONFIG.set(config).expect("Config already initialized");
-}
-
-fn get_config() -> &'static Config {
-    CONFIG.get().expect("Config not initialized")
-}
+FUNCTION GET_CONFIG() -> Config reference
+    RETURN CONFIG.GET()  // Panics if not initialized
 ```
 
 **Better approach — dependency injection:**
-```rust
+```text
 // Instead of accessing a global, pass the config explicitly
-fn start_server(config: &Config, pool: &PgPool) -> Result<(), ServerError> {
+FUNCTION START_SERVER(config: Config, pool: PgPool) -> void or ServerError
     // ...
-}
 ```
 
 ### Structural Patterns
@@ -177,36 +135,28 @@ Structural patterns deal with composing structs and traits to form larger struct
 
 **Solution:** A wrapper that translates between the two interfaces.
 
-```rust
-// External library's interface — you can't change this
-struct LegacyPaymentProcessor;
-impl LegacyPaymentProcessor {
-    fn process_usd_cents(&self, amount: u64, card: &str) -> bool {
+```text
+// External library's interface -- you can't change this
+STRUCTURE LegacyPaymentProcessor
+    FUNCTION PROCESS_USD_CENTS(amount: unsigned integer, card: string) -> boolean
         // Legacy implementation...
-        true
-    }
-}
+        RETURN true
 
 // Your application's interface
-trait PaymentGateway {
-    fn charge(&self, amount_dollars: f64, card_number: &str) -> Result<(), PaymentError>;
-}
+INTERFACE PaymentGateway
+    FUNCTION CHARGE(amount_dollars: float, card_number: string) -> void or PaymentError
 
-// Adapter — bridges the gap
-struct LegacyPaymentAdapter {
-    processor: LegacyPaymentProcessor,
-}
+// Adapter -- bridges the gap
+STRUCTURE LegacyPaymentAdapter
+    processor: LegacyPaymentProcessor
 
-impl PaymentGateway for LegacyPaymentAdapter {
-    fn charge(&self, amount_dollars: f64, card_number: &str) -> Result<(), PaymentError> {
-        let cents = (amount_dollars * 100.0) as u64;
-        if self.processor.process_usd_cents(cents, card_number) {
-            Ok(())
-        } else {
-            Err(PaymentError::Declined)
-        }
-    }
-}
+// Implement PaymentGateway for LegacyPaymentAdapter
+    FUNCTION CHARGE(amount_dollars: float, card_number: string) -> void or PaymentError
+        cents <- ROUND(amount_dollars * 100.0) AS unsigned integer
+        IF self.processor.PROCESS_USD_CENTS(cents, card_number)
+            RETURN Ok
+        ELSE
+            RETURN Err(PaymentError::Declined)
 ```
 
 **Real-world use:** Wrapping third-party libraries to match your application's interfaces, enabling you to swap implementations without changing callers.
@@ -217,50 +167,33 @@ impl PaymentGateway for LegacyPaymentAdapter {
 
 **Solution:** A wrapper that implements the same trait, adding behavior before/after delegating to the wrapped object.
 
-```rust
-trait Logger: Send + Sync {
-    fn log(&self, message: &str);
-}
+```text
+INTERFACE Logger
+    FUNCTION LOG(message: string)
 
-struct ConsoleLogger;
-impl Logger for ConsoleLogger {
-    fn log(&self, message: &str) {
-        println!("{message}");
-    }
-}
+STRUCTURE ConsoleLogger
+    FUNCTION LOG(message: string)
+        PRINT message
 
 // Decorator: adds timestamps
-struct TimestampLogger<L: Logger> {
-    inner: L,
-}
+STRUCTURE TimestampLogger<L: Logger>
+    inner: L
 
-impl<L: Logger> Logger for TimestampLogger<L> {
-    fn log(&self, message: &str) {
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
-        self.inner.log(&format!("[{now}] {message}"));
-    }
-}
+    FUNCTION LOG(message: string)
+        now <- CURRENT_TIME formatted as "YYYY-MM-DD HH:MM:SS"
+        self.inner.LOG("[" + now + "] " + message)
 
 // Decorator: adds log levels
-struct LevelLogger<L: Logger> {
-    inner: L,
-    level: String,
-}
+STRUCTURE LevelLogger<L: Logger>
+    inner: L
+    level: string
 
-impl<L: Logger> Logger for LevelLogger<L> {
-    fn log(&self, message: &str) {
-        self.inner.log(&format!("[{}] {message}", self.level));
-    }
-}
+    FUNCTION LOG(message: string)
+        self.inner.LOG("[" + self.level + "] " + message)
 
-// Composable — stack decorators
-let logger = TimestampLogger {
-    inner: LevelLogger {
-        inner: ConsoleLogger,
-        level: "INFO".to_string(),
-    },
-};
-logger.log("Server started");
+// Composable -- stack decorators
+logger <- TimestampLogger { inner: LevelLogger { inner: ConsoleLogger, level: "INFO" } }
+logger.LOG("Server started")
 // Output: [2024-03-15 10:30:00] [INFO] Server started
 ```
 
@@ -270,38 +203,27 @@ logger.log("Server started");
 
 **Solution:** A simplified interface that hides the complexity.
 
-```rust
+```text
 // Complex subsystem
-struct CpuMonitor { /* ... */ }
-struct MemoryMonitor { /* ... */ }
-struct DiskMonitor { /* ... */ }
-struct NetworkMonitor { /* ... */ }
+STRUCTURE CpuMonitor, MemoryMonitor, DiskMonitor, NetworkMonitor
 
-// Facade — simple interface for common operations
-pub struct SystemHealth {
-    cpu: CpuMonitor,
-    memory: MemoryMonitor,
-    disk: DiskMonitor,
-    network: NetworkMonitor,
-}
+// Facade -- simple interface for common operations
+STRUCTURE SystemHealth
+    cpu: CpuMonitor, memory: MemoryMonitor, disk: DiskMonitor, network: NetworkMonitor
 
-impl SystemHealth {
-    pub fn is_healthy(&self) -> bool {
-        self.cpu.usage() < 90.0
-            && self.memory.available_percent() > 10.0
-            && self.disk.free_percent() > 5.0
-            && self.network.is_reachable()
-    }
+    FUNCTION IS_HEALTHY() -> boolean
+        RETURN cpu.USAGE() < 90.0
+            AND memory.AVAILABLE_PERCENT() > 10.0
+            AND disk.FREE_PERCENT() > 5.0
+            AND network.IS_REACHABLE()
 
-    pub fn summary(&self) -> HealthReport {
-        HealthReport {
-            cpu_usage: self.cpu.usage(),
-            memory_free: self.memory.available_percent(),
-            disk_free: self.disk.free_percent(),
-            network_ok: self.network.is_reachable(),
+    FUNCTION SUMMARY() -> HealthReport
+        RETURN HealthReport {
+            cpu_usage: cpu.USAGE(),
+            memory_free: memory.AVAILABLE_PERCENT(),
+            disk_free: disk.FREE_PERCENT(),
+            network_ok: network.IS_REACHABLE()
         }
-    }
-}
 ```
 
 ### Behavioral Patterns
@@ -314,46 +236,29 @@ Behavioral patterns deal with communication between objects and distribution of 
 
 **Solution:** Define a family of algorithms behind a trait, and pass the desired implementation.
 
-```rust
-trait PricingStrategy {
-    fn calculate(&self, base_price: f64, quantity: u32) -> f64;
-}
+```text
+INTERFACE PricingStrategy
+    FUNCTION CALCULATE(base_price: float, quantity: unsigned integer) -> float
 
-struct RegularPricing;
-impl PricingStrategy for RegularPricing {
-    fn calculate(&self, base_price: f64, quantity: u32) -> f64 {
-        base_price * quantity as f64
-    }
-}
+STRUCTURE RegularPricing
+    FUNCTION CALCULATE(base_price, quantity) -> float
+        RETURN base_price * quantity
 
-struct BulkPricing { threshold: u32, discount: f64 }
-impl PricingStrategy for BulkPricing {
-    fn calculate(&self, base_price: f64, quantity: u32) -> f64 {
-        let total = base_price * quantity as f64;
-        if quantity >= self.threshold {
-            total * (1.0 - self.discount)
-        } else {
-            total
-        }
-    }
-}
+STRUCTURE BulkPricing { threshold, discount }
+    FUNCTION CALCULATE(base_price, quantity) -> float
+        total <- base_price * quantity
+        IF quantity ≥ self.threshold
+            RETURN total * (1.0 - self.discount)
+        ELSE
+            RETURN total
 
-struct SeasonalPricing { multiplier: f64 }
-impl PricingStrategy for SeasonalPricing {
-    fn calculate(&self, base_price: f64, quantity: u32) -> f64 {
-        base_price * self.multiplier * quantity as f64
-    }
-}
+STRUCTURE SeasonalPricing { multiplier }
+    FUNCTION CALCULATE(base_price, quantity) -> float
+        RETURN base_price * self.multiplier * quantity
 
 // The order doesn't know which pricing strategy is used
-fn calculate_order_total(
-    items: &[(f64, u32)],
-    strategy: &dyn PricingStrategy,
-) -> f64 {
-    items.iter()
-        .map(|(price, qty)| strategy.calculate(*price, *qty))
-        .sum()
-}
+FUNCTION CALCULATE_ORDER_TOTAL(items: list of (price, qty), strategy: PricingStrategy) -> float
+    RETURN SUM OF strategy.CALCULATE(price, qty) FOR EACH (price, qty) IN items
 ```
 
 #### Observer Pattern
@@ -362,45 +267,28 @@ fn calculate_order_total(
 
 **Solution:** Maintain a list of listeners and notify them when state changes.
 
-```rust
-type Callback = Box<dyn Fn(&OrderEvent) + Send + Sync>;
+```text
+STRUCTURE EventBus
+    listeners: list of callback functions
 
-pub struct EventBus {
-    listeners: Vec<Callback>,
-}
+    FUNCTION NEW() -> EventBus
+        RETURN EventBus { listeners: empty list }
 
-impl EventBus {
-    pub fn new() -> Self {
-        Self { listeners: vec![] }
-    }
+    FUNCTION SUBSCRIBE(callback)
+        APPEND callback TO self.listeners
 
-    pub fn subscribe(&mut self, callback: Callback) {
-        self.listeners.push(callback);
-    }
-
-    pub fn publish(&self, event: &OrderEvent) {
-        for listener in &self.listeners {
-            listener(event);
-        }
-    }
-}
+    FUNCTION PUBLISH(event: OrderEvent)
+        FOR EACH listener IN self.listeners
+            CALL listener(event)
 
 // Usage
-let mut bus = EventBus::new();
+bus <- NEW EventBus()
 
-bus.subscribe(Box::new(|event| {
-    println!("Inventory: updating stock for order {}", event.order_id);
-}));
+bus.SUBSCRIBE(event => PRINT "Inventory: updating stock for order " + event.order_id)
+bus.SUBSCRIBE(event => PRINT "Email: sending confirmation for order " + event.order_id)
+bus.SUBSCRIBE(event => PRINT "Analytics: tracking order " + event.order_id)
 
-bus.subscribe(Box::new(|event| {
-    println!("Email: sending confirmation for order {}", event.order_id);
-}));
-
-bus.subscribe(Box::new(|event| {
-    println!("Analytics: tracking order {}", event.order_id);
-}));
-
-bus.publish(&OrderEvent { order_id: 42 });
+bus.PUBLISH(OrderEvent { order_id: 42 })
 ```
 
 #### State Pattern
@@ -409,44 +297,29 @@ bus.publish(&OrderEvent { order_id: 42 });
 
 **Solution:** Represent each state as a separate type/struct, with transitions between them.
 
-```rust
+```text
 // State machine for an order
-enum OrderState {
-    Pending,
-    Confirmed { confirmed_at: DateTime<Utc> },
-    Shipped { tracking_number: String },
-    Delivered { delivered_at: DateTime<Utc> },
-    Cancelled { reason: String },
-}
+ENUMERATION OrderState
+    Pending
+    Confirmed { confirmed_at: DateTime }
+    Shipped { tracking_number: string }
+    Delivered { delivered_at: DateTime }
+    Cancelled { reason: string }
 
-impl OrderState {
-    fn confirm(self) -> Result<OrderState, OrderError> {
-        match self {
-            OrderState::Pending => Ok(OrderState::Confirmed {
-                confirmed_at: Utc::now(),
-            }),
-            _ => Err(OrderError::InvalidTransition("Can only confirm pending orders")),
-        }
-    }
+    FUNCTION CONFIRM(self) -> OrderState or OrderError
+        MATCH self
+            CASE Pending: RETURN Ok(Confirmed { confirmed_at: NOW() })
+            DEFAULT: RETURN Err("Can only confirm pending orders")
 
-    fn ship(self, tracking: String) -> Result<OrderState, OrderError> {
-        match self {
-            OrderState::Confirmed { .. } => Ok(OrderState::Shipped {
-                tracking_number: tracking,
-            }),
-            _ => Err(OrderError::InvalidTransition("Can only ship confirmed orders")),
-        }
-    }
+    FUNCTION SHIP(self, tracking: string) -> OrderState or OrderError
+        MATCH self
+            CASE Confirmed: RETURN Ok(Shipped { tracking_number: tracking })
+            DEFAULT: RETURN Err("Can only ship confirmed orders")
 
-    fn cancel(self, reason: String) -> Result<OrderState, OrderError> {
-        match self {
-            OrderState::Pending | OrderState::Confirmed { .. } => {
-                Ok(OrderState::Cancelled { reason })
-            }
-            _ => Err(OrderError::InvalidTransition("Cannot cancel shipped/delivered orders")),
-        }
-    }
-}
+    FUNCTION CANCEL(self, reason: string) -> OrderState or OrderError
+        MATCH self
+            CASE Pending OR Confirmed: RETURN Ok(Cancelled { reason })
+            DEFAULT: RETURN Err("Cannot cancel shipped/delivered orders")
 ```
 
 ### Rust-Specific Patterns
@@ -455,53 +328,48 @@ impl OrderState {
 
 Wrap a primitive type to give it semantic meaning and type safety.
 
-```rust
-// Without newtype — easy to mix up
-fn transfer(from: u64, to: u64, amount: u64) { /* ... */ }
-transfer(amount, from_id, to_id); // Compiles! But wrong!
+```text
+// Without newtype -- easy to mix up
+FUNCTION TRANSFER(from: integer, to: integer, amount: integer)
+TRANSFER(amount, from_id, to_id)  // Compiles! But wrong!
 
-// With newtype — compiler catches mistakes
-struct UserId(u64);
-struct Amount(u64);
+// With newtype -- compiler catches mistakes
+TYPE UserId <- wrapper around integer
+TYPE Amount <- wrapper around integer
 
-fn transfer(from: UserId, to: UserId, amount: Amount) { /* ... */ }
-transfer(Amount(100), UserId(1), UserId(2)); // Compiler error!
+FUNCTION TRANSFER(from: UserId, to: UserId, amount: Amount)
+TRANSFER(Amount(100), UserId(1), UserId(2))  // Compiler error!
 ```
 
 #### Typestate Pattern
 
 Use the type system to enforce valid state transitions at compile time.
 
-```rust
-struct Unlocked;
-struct Locked;
+```text
+// State marker types (zero-sized, compile-time only)
+TYPE Unlocked
+TYPE Locked
 
-struct Door<State> {
-    _state: std::marker::PhantomData<State>,
-}
+STRUCTURE Door<State>
+    // State is tracked in the type, not in data
 
-impl Door<Locked> {
-    fn unlock(self, key: &Key) -> Result<Door<Unlocked>, LockError> {
-        // verify key...
-        Ok(Door { _state: std::marker::PhantomData })
-    }
-}
+// Methods only available when Door is Locked
+FUNCTION UNLOCK(self: Door<Locked>, key: Key) -> Door<Unlocked> or LockError
+    // verify key...
+    RETURN Door<Unlocked>
 
-impl Door<Unlocked> {
-    fn lock(self) -> Door<Locked> {
-        Door { _state: std::marker::PhantomData }
-    }
+// Methods only available when Door is Unlocked
+FUNCTION LOCK(self: Door<Unlocked>) -> Door<Locked>
+    RETURN Door<Locked>
 
-    fn open(&self) {
-        println!("Door is open");
-    }
-}
+FUNCTION OPEN(self: Door<Unlocked>)
+    PRINT "Door is open"
 
 // Compile-time enforcement:
-let door: Door<Locked> = Door { _state: std::marker::PhantomData };
-// door.open(); // ← Compiler error! Can't open a locked door
-let door = door.unlock(&key)?;
-door.open(); // ✅ Works — door is unlocked
+door <- Door<Locked>
+// door.OPEN()         // Compiler error! Can't open a locked door
+door <- door.UNLOCK(key)?
+door.OPEN()            // Works -- door is unlocked
 ```
 
 **Real-world use:** HTTP request builders (can't send a request without setting the URL), database transaction builders (can't commit without beginning), protocol state machines.

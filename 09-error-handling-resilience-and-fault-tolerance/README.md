@@ -25,110 +25,85 @@ Rust's type system forces you to handle errors at compile time. You can't ignore
 
 **`Result<T, E>` — Recoverable errors:**
 
-```rust
-use std::fs;
+```text
+FUNCTION READ_CONFIG(path: string) -> Config or ConfigError
+    content <- READ_FILE_TO_STRING(path)
+        ON ERROR: RETURN ConfigError::FileNotFound(path, error)
 
-fn read_config(path: &str) -> Result<Config, ConfigError> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| ConfigError::FileNotFound(path.to_string(), e))?;
+    config <- PARSE_TOML(content) AS Config
+        ON ERROR: RETURN ConfigError::ParseError(error)
 
-    let config: Config = toml::from_str(&content)
-        .map_err(|e| ConfigError::ParseError(e))?;
+    IF config.port = 0
+        RETURN Err(ConfigError::InvalidPort)
 
-    if config.port == 0 {
-        return Err(ConfigError::InvalidPort);
-    }
-
-    Ok(config)
-}
+    RETURN Ok(config)
 ```
 
 **`Option<T>` — Absence of value:**
 
-```rust
-fn find_user(users: &[User], email: &str) -> Option<&User> {
-    users.iter().find(|u| u.email == email)
-}
+```text
+FUNCTION FIND_USER(users: list of User, email: string) -> optional User
+    RETURN FIND user IN users WHERE user.email = email
 
 // Caller must handle the None case
-match find_user(&users, "alice@example.com") {
-    Some(user) => println!("Found: {}", user.name),
-    None => println!("User not found"),
-}
+MATCH FIND_USER(users, "alice@example.com")
+    CASE Some(user): PRINT "Found: " + user.name
+    CASE None: PRINT "User not found"
 ```
 
 **The `?` operator — Error propagation:**
 
 The `?` operator propagates errors up the call stack. If the expression is `Err`, it returns early. This eliminates nested match statements and keeps the happy path readable.
 
-```rust
-fn process_order(order_id: u64) -> Result<Receipt, OrderError> {
-    let order = fetch_order(order_id)?;          // Returns early if Err
-    let payment = charge_payment(&order)?;        // Returns early if Err
-    let receipt = generate_receipt(&order, &payment)?; // Returns early if Err
-    send_confirmation_email(&order)?;             // Returns early if Err
-    Ok(receipt)
-}
+```text
+FUNCTION PROCESS_ORDER(order_id: unsigned integer) -> Receipt or OrderError
+    order <- FETCH_ORDER(order_id)?           // Returns early if Err
+    payment <- CHARGE_PAYMENT(order)?         // Returns early if Err
+    receipt <- GENERATE_RECEIPT(order, payment)?  // Returns early if Err
+    SEND_CONFIRMATION_EMAIL(order)?           // Returns early if Err
+    RETURN Ok(receipt)
 ```
 
 ### Error Hierarchies & Custom Error Types
 
 **`thiserror` — Defining error types:**
 
-```rust
-use thiserror::Error;
+```text
+ENUMERATION OrderError
+    NotFound(id)
+        // "Order {id} not found"
+    InsufficientInventory { item_id, requested, available }
+        // "Insufficient inventory for item {item_id}: need {requested}, have {available}"
+    PaymentFailed(PaymentError)
+        // "Payment failed: {error}"
+    Database(SqlError)
+        // "Database error: {error}"
 
-#[derive(Error, Debug)]
-pub enum OrderError {
-    #[error("Order {0} not found")]
-    NotFound(u64),
-
-    #[error("Insufficient inventory for item {item_id}: need {requested}, have {available}")]
-    InsufficientInventory {
-        item_id: u64,
-        requested: u32,
-        available: u32,
-    },
-
-    #[error("Payment failed: {0}")]
-    PaymentFailed(#[from] PaymentError),
-
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
-}
-
-#[derive(Error, Debug)]
-pub enum PaymentError {
-    #[error("Card declined: {reason}")]
-    CardDeclined { reason: String },
-
-    #[error("Payment gateway timeout")]
-    GatewayTimeout,
-
-    #[error("Invalid amount: {0}")]
-    InvalidAmount(f64),
-}
+ENUMERATION PaymentError
+    CardDeclined { reason: string }
+        // "Card declined: {reason}"
+    GatewayTimeout
+        // "Payment gateway timeout"
+    InvalidAmount(amount: float)
+        // "Invalid amount: {amount}"
 ```
 
 **`anyhow` — For application code:**
 
 `anyhow` is for application-level code where you don't need callers to match on specific error variants — you just need to propagate errors with context.
 
-```rust
-use anyhow::{Context, Result};
+```text
+FUNCTION LOAD_AND_PROCESS() -> void or Error
+    config <- READ_CONFIG("config.toml")
+        ON ERROR: add context "Failed to load configuration"
 
-fn load_and_process() -> Result<()> {
-    let config = read_config("config.toml")
-        .context("Failed to load configuration")?;
+    db <- CONNECT_TO_DATABASE(config.database_url)
+        ON ERROR: add context "Failed to connect to database"
 
-    let db = connect_to_database(&config.database_url)
-        .context("Failed to connect to database")?;
+    PROCESS_PENDING_ORDERS(db)
+        ON ERROR: add context "Failed to process pending orders"
 
-    process_pending_orders(&db)
-        .context("Failed to process pending orders")?;
-
-    Ok(())
-}
+    RETURN Ok
 ```
 
 **When to use which:**
@@ -154,33 +129,18 @@ Attempt 5: give up
 
 **Why jitter matters:** Without jitter, if 1,000 clients all start retrying at the same time (after a service recovers), they'll all retry at the same intervals, creating periodic "thundering herd" spikes. Jitter randomizes the retry timing, spreading the load.
 
-```rust
-use std::time::Duration;
-use rand::Rng;
+```text
+ASYNC FUNCTION RETRY_WITH_BACKOFF(operation, max_retries, base_delay) -> T or Error
+    rng <- NEW random number generator
 
-async fn retry_with_backoff<F, T, E>(
-    mut operation: F,
-    max_retries: u32,
-    base_delay: Duration,
-) -> Result<T, E>
-where
-    F: FnMut() -> Result<T, E>,
-{
-    let mut rng = rand::thread_rng();
-
-    for attempt in 0..max_retries {
-        match operation() {
-            Ok(result) => return Ok(result),
-            Err(e) if attempt == max_retries - 1 => return Err(e),
-            Err(_) => {
-                let delay = base_delay * 2u32.pow(attempt);
-                let jitter = Duration::from_millis(rng.gen_range(0..100));
-                tokio::time::sleep(delay + jitter).await;
-            }
-        }
-    }
-    unreachable!()
-}
+    FOR attempt FROM 0 TO max_retries - 1
+        MATCH operation()
+            CASE Ok(result): RETURN Ok(result)
+            CASE Err(e) IF attempt = max_retries - 1: RETURN Err(e)
+            CASE Err(_):
+                delay <- base_delay * 2^attempt
+                jitter <- RANDOM duration between 0 and 100ms
+                SLEEP(delay + jitter)
 ```
 
 **When NOT to retry:**

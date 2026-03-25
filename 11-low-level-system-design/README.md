@@ -72,71 +72,64 @@ Interfaces (traits in Rust) define contracts between components. Good interfaces
 
 **1. Program to interfaces, not implementations:**
 
-```rust
-// Bad — tightly coupled to PostgreSQL
-fn create_order(pool: &PgPool, order: Order) -> Result<OrderId, sqlx::Error> { /* ... */ }
+```text
+// Bad -- tightly coupled to PostgreSQL
+FUNCTION CREATE_ORDER(pool: PgPool, order: Order) → Result<OrderId, SqlError>
 
-// Good — depends on an abstraction
-trait OrderRepository {
-    fn save(&self, order: &Order) -> Result<OrderId, RepositoryError>;
-    fn find_by_id(&self, id: OrderId) -> Result<Option<Order>, RepositoryError>;
-    fn find_by_user(&self, user_id: UserId) -> Result<Vec<Order>, RepositoryError>;
-}
+// Good -- depends on an abstraction
+INTERFACE OrderRepository
+    FUNCTION SAVE(order: Order) → Result<OrderId, RepositoryError>
+    FUNCTION FIND_BY_ID(id: OrderId) → Result<Optional<Order>, RepositoryError>
+    FUNCTION FIND_BY_USER(user_id: UserId) → Result<List<Order>, RepositoryError>
 
 // Now you can swap implementations without changing callers
-struct PostgresOrderRepo { pool: PgPool }
-struct InMemoryOrderRepo { orders: HashMap<OrderId, Order> }  // For testing
+RECORD PostgresOrderRepo { pool: PgPool }
+RECORD InMemoryOrderRepo { orders: Map<OrderId, Order> }  // For testing
 ```
 
 **2. Interface Segregation — small, focused interfaces:**
 
-```rust
-// Bad — one massive trait
-trait UserService {
-    fn create(&self, user: NewUser) -> Result<User, Error>;
-    fn find(&self, id: UserId) -> Result<Option<User>, Error>;
-    fn update(&self, id: UserId, changes: UserUpdate) -> Result<User, Error>;
-    fn delete(&self, id: UserId) -> Result<(), Error>;
-    fn authenticate(&self, email: &str, password: &str) -> Result<Token, Error>;
-    fn reset_password(&self, email: &str) -> Result<(), Error>;
-    fn send_verification_email(&self, user: &User) -> Result<(), Error>;
-    fn upload_avatar(&self, user: &User, image: &[u8]) -> Result<Url, Error>;
-}
+```text
+// Bad -- one massive interface
+INTERFACE UserService
+    FUNCTION CREATE(user: NewUser) → Result<User, Error>
+    FUNCTION FIND(id: UserId) → Result<Optional<User>, Error>
+    FUNCTION UPDATE(id: UserId, changes: UserUpdate) → Result<User, Error>
+    FUNCTION DELETE(id: UserId) → Result<Void, Error>
+    FUNCTION AUTHENTICATE(email: String, password: String) → Result<Token, Error>
+    FUNCTION RESET_PASSWORD(email: String) → Result<Void, Error>
+    FUNCTION SEND_VERIFICATION_EMAIL(user: User) → Result<Void, Error>
+    FUNCTION UPLOAD_AVATAR(user: User, image: Bytes) → Result<Url, Error>
 
-// Good — split by concern
-trait UserRepository {
-    fn save(&self, user: &User) -> Result<(), Error>;
-    fn find_by_id(&self, id: UserId) -> Result<Option<User>, Error>;
-}
+// Good -- split by concern
+INTERFACE UserRepository
+    FUNCTION SAVE(user: User) → Result<Void, Error>
+    FUNCTION FIND_BY_ID(id: UserId) → Result<Optional<User>, Error>
 
-trait AuthService {
-    fn authenticate(&self, email: &str, password: &str) -> Result<Token, Error>;
-    fn reset_password(&self, email: &str) -> Result<(), Error>;
-}
+INTERFACE AuthService
+    FUNCTION AUTHENTICATE(email: String, password: String) → Result<Token, Error>
+    FUNCTION RESET_PASSWORD(email: String) → Result<Void, Error>
 
-trait AvatarService {
-    fn upload(&self, user_id: UserId, image: &[u8]) -> Result<Url, Error>;
-}
+INTERFACE AvatarService
+    FUNCTION UPLOAD(user_id: UserId, image: Bytes) → Result<Url, Error>
 ```
 
 **3. Make impossible states unrepresentable:**
 
-```rust
-// Bad — caller must remember to check status before accessing fields
-struct Payment {
-    status: PaymentStatus,
-    transaction_id: Option<String>,  // Only present if Completed
-    error_message: Option<String>,   // Only present if Failed
-    refund_id: Option<String>,       // Only present if Refunded
-}
+```text
+// Bad -- caller must remember to check status before accessing fields
+RECORD Payment
+    status: PaymentStatus
+    transaction_id: Optional<String>  // Only present if Completed
+    error_message: Optional<String>   // Only present if Failed
+    refund_id: Optional<String>       // Only present if Refunded
 
-// Good — the type system enforces valid combinations
-enum Payment {
-    Pending { created_at: DateTime<Utc> },
-    Completed { transaction_id: String, completed_at: DateTime<Utc> },
-    Failed { error_message: String, failed_at: DateTime<Utc> },
-    Refunded { refund_id: String, original_transaction_id: String },
-}
+// Good -- the type system enforces valid combinations
+ENUM Payment
+    Pending { created_at: DateTime }
+    Completed { transaction_id: String, completed_at: DateTime }
+    Failed { error_message: String, failed_at: DateTime }
+    Refunded { refund_id: String, original_transaction_id: String }
 ```
 
 ### Data Flow Design
@@ -151,15 +144,14 @@ Input → [Validate] → [Enrich] → [Transform] → [Store] → Output
 
 Each step is a pure function that takes input and produces output. This is easy to test (each step independently) and extend (add a new step).
 
-```rust
-fn process_order(raw: RawOrderInput) -> Result<OrderConfirmation, OrderError> {
-    let validated = validate_order(raw)?;
-    let enriched = enrich_with_pricing(validated)?;
-    let with_tax = calculate_tax(enriched)?;
-    let stored = save_to_database(with_tax)?;
-    let confirmation = send_confirmation(stored)?;
-    Ok(confirmation)
-}
+```text
+FUNCTION PROCESS_ORDER(raw: RawOrderInput) → Result<OrderConfirmation, OrderError>
+    validated ← VALIDATE_ORDER(raw)?
+    enriched ← ENRICH_WITH_PRICING(validated)?
+    with_tax ← CALCULATE_TAX(enriched)?
+    stored ← SAVE_TO_DATABASE(with_tax)?
+    confirmation ← SEND_CONFIRMATION(stored)?
+    RETURN confirmation
 ```
 
 **Middleware / interceptor pattern:**
@@ -194,39 +186,26 @@ Many systems have well-defined states and transitions. Modeling them explicitly 
                           └─────────────┘
 ```
 
-```rust
-enum SubscriptionState {
-    Trial { expires_at: DateTime<Utc> },
-    Active { plan: Plan, renews_at: DateTime<Utc> },
-    Expired { expired_at: DateTime<Utc> },
-    Cancelled { cancelled_at: DateTime<Utc>, reason: String },
-}
+```text
+ENUM SubscriptionState
+    Trial { expires_at: DateTime }
+    Active { plan: Plan, renews_at: DateTime }
+    Expired { expired_at: DateTime }
+    Cancelled { cancelled_at: DateTime, reason: String }
 
-impl SubscriptionState {
-    fn activate(self, plan: Plan) -> Result<Self, SubscriptionError> {
-        match self {
-            Self::Trial { .. } => Ok(Self::Active {
-                plan,
-                renews_at: Utc::now() + Duration::days(30),
-            }),
-            _ => Err(SubscriptionError::InvalidTransition(
-                "Can only activate from trial"
-            )),
-        }
-    }
+FUNCTION ACTIVATE(state: SubscriptionState, plan: Plan) → Result<SubscriptionState, SubscriptionError>
+    MATCH state
+        CASE Trial { .. }:
+            RETURN Active { plan ← plan, renews_at ← NOW() + 30 days }
+        DEFAULT:
+            RETURN Error("Can only activate from trial")
 
-    fn cancel(self, reason: String) -> Result<Self, SubscriptionError> {
-        match self {
-            Self::Trial { .. } | Self::Active { .. } => Ok(Self::Cancelled {
-                cancelled_at: Utc::now(),
-                reason,
-            }),
-            _ => Err(SubscriptionError::InvalidTransition(
-                "Cannot cancel expired or already cancelled subscription"
-            )),
-        }
-    }
-}
+FUNCTION CANCEL(state: SubscriptionState, reason: String) → Result<SubscriptionState, SubscriptionError>
+    MATCH state
+        CASE Trial { .. } OR Active { .. }:
+            RETURN Cancelled { cancelled_at ← NOW(), reason ← reason }
+        DEFAULT:
+            RETURN Error("Cannot cancel expired or already cancelled subscription")
 ```
 
 ### Concurrency Design
@@ -236,72 +215,59 @@ Designing for concurrent access is critical in any system handling multiple requ
 **Shared-nothing architecture:**
 Each request handler gets its own copy of the data it needs. No shared mutable state. This is the simplest and most scalable approach.
 
-```rust
+```text
 // Each request gets its own connection from the pool
-async fn handle_request(pool: &PgPool) -> Result<Response, Error> {
-    let conn = pool.acquire().await?;  // Gets a connection, doesn't share it
-    let data = query(&conn).await?;
-    Ok(Response::json(data))
-}
+ASYNC FUNCTION HANDLE_REQUEST(pool: PgPool) → Result<Response, Error>
+    conn ← AWAIT pool.ACQUIRE()?    // Gets a connection, doesn't share it
+    data ← AWAIT QUERY(conn)?
+    RETURN Response.JSON(data)
 ```
 
 **When shared state is necessary:**
 Use `Arc<Mutex<T>>` or `Arc<RwLock<T>>` carefully:
 
-```rust
-use std::sync::{Arc, RwLock};
+```text
+RECORD RateLimiter
+    requests: Shared<ReadWriteLock<Map<IpAddr, List<Instant>>>>
+    max_requests: Integer
+    window: Duration
 
-struct RateLimiter {
-    requests: Arc<RwLock<HashMap<IpAddr, Vec<Instant>>>>,
-    max_requests: usize,
-    window: Duration,
-}
+FUNCTION IS_ALLOWED(limiter: RateLimiter, ip: IpAddr) → Boolean
+    ACQUIRE WRITE LOCK ON limiter.requests
+    now ← CURRENT_INSTANT()
+    window_start ← now - limiter.window
 
-impl RateLimiter {
-    fn is_allowed(&self, ip: IpAddr) -> bool {
-        let mut requests = self.requests.write().unwrap();
-        let now = Instant::now();
-        let window_start = now - self.window;
+    entry ← requests.GET_OR_INSERT(ip, EMPTY_LIST)
+    REMOVE all t FROM entry WHERE t ≤ window_start   // Remove expired entries
 
-        let entry = requests.entry(ip).or_insert_with(Vec::new);
-        entry.retain(|&t| t > window_start);  // Remove expired entries
-
-        if entry.len() < self.max_requests {
-            entry.push(now);
-            true
-        } else {
-            false
-        }
-    }
-}
+    IF LENGTH(entry) < limiter.max_requests THEN
+        APPEND now TO entry
+        RETURN TRUE
+    ELSE
+        RETURN FALSE
+    RELEASE LOCK
 ```
 
 **Message passing over shared memory:**
 When possible, use channels instead of shared state. Each component owns its data and communicates via messages.
 
-```rust
-use tokio::sync::mpsc;
+```text
+ENUM Command
+    IncrementCounter { name: String, amount: Integer }
+    GetCounter { name: String, reply: Channel<Integer> }
 
-enum Command {
-    IncrementCounter { name: String, amount: u64 },
-    GetCounter { name: String, reply: oneshot::Sender<u64> },
-}
+ASYNC FUNCTION COUNTER_ACTOR(rx: Receiver<Command>)
+    counters ← EMPTY Map<String, Integer>
 
-async fn counter_actor(mut rx: mpsc::Receiver<Command>) {
-    let mut counters: HashMap<String, u64> = HashMap::new();
-
-    while let Some(cmd) = rx.recv().await {
-        match cmd {
-            Command::IncrementCounter { name, amount } => {
-                *counters.entry(name).or_insert(0) += amount;
-            }
-            Command::GetCounter { name, reply } => {
-                let value = counters.get(&name).copied().unwrap_or(0);
-                let _ = reply.send(value);
-            }
-        }
-    }
-}
+    WHILE cmd ← AWAIT rx.RECEIVE()
+        MATCH cmd
+            CASE IncrementCounter { name, amount }:
+                IF name NOT IN counters THEN
+                    counters[name] ← 0
+                counters[name] ← counters[name] + amount
+            CASE GetCounter { name, reply }:
+                value ← counters.GET(name) OR 0
+                SEND value TO reply
 ```
 
 ### Schema Design for Specific Use Cases
@@ -349,60 +315,50 @@ CREATE INDEX idx_audit_entity ON audit_log (entity_type, entity_id, created_at D
 
 **Module design:**
 
-```rust
+```text
 // domain/
-pub struct ShortUrl {
-    pub code: ShortCode,       // e.g., "abc123"
-    pub original_url: Url,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub click_count: u64,
-}
+RECORD ShortUrl
+    code: ShortCode          // e.g., "abc123"
+    original_url: Url
+    created_at: DateTime
+    expires_at: Optional<DateTime>
+    click_count: Integer
 
-pub struct ShortCode(String);  // Newtype for type safety
+TYPE ShortCode = WRAPPER(String)  // Newtype for type safety
 
-impl ShortCode {
-    pub fn generate() -> Self {
-        // Base62 encoding of random bytes → 7-char code
-        // 62^7 = 3.5 trillion possibilities
-        Self(nanoid::nanoid!(7, &ALPHABET))
-    }
-}
+FUNCTION GENERATE_SHORT_CODE() → ShortCode
+    // Base62 encoding of random bytes → 7-char code
+    // 62^7 = 3.5 trillion possibilities
+    RETURN ShortCode(RANDOM_NANOID(length ← 7, alphabet ← BASE62))
 
 // application/
-pub struct UrlService<R: UrlRepository> {
-    repo: R,
-}
+RECORD UrlService<R: UrlRepository>
+    repo: R
 
-impl<R: UrlRepository> UrlService<R> {
-    pub async fn shorten(&self, original: &str) -> Result<ShortUrl, UrlError> {
-        let url = Url::parse(original).map_err(|_| UrlError::InvalidUrl)?;
-        let code = ShortCode::generate();
-        let short_url = ShortUrl::new(code, url);
-        self.repo.save(&short_url).await?;
-        Ok(short_url)
-    }
+ASYNC FUNCTION SHORTEN(svc: UrlService, original: String) → Result<ShortUrl, UrlError>
+    url ← PARSE_URL(original)
+    IF url IS INVALID THEN RETURN Error(InvalidUrl)
+    code ← GENERATE_SHORT_CODE()
+    short_url ← NEW ShortUrl(code, url)
+    AWAIT svc.repo.SAVE(short_url)?
+    RETURN short_url
 
-    pub async fn resolve(&self, code: &str) -> Result<Url, UrlError> {
-        let code = ShortCode::from(code);
-        let short_url = self.repo.find_by_code(&code).await?
-            .ok_or(UrlError::NotFound)?;
+ASYNC FUNCTION RESOLVE(svc: UrlService, code: String) → Result<Url, UrlError>
+    code ← ShortCode(code)
+    short_url ← AWAIT svc.repo.FIND_BY_CODE(code)?
+    IF short_url IS NONE THEN RETURN Error(NotFound)
 
-        if short_url.is_expired() {
-            return Err(UrlError::Expired);
-        }
+    IF short_url.IS_EXPIRED() THEN
+        RETURN Error(Expired)
 
-        self.repo.increment_clicks(&code).await?;
-        Ok(short_url.original_url)
-    }
-}
+    AWAIT svc.repo.INCREMENT_CLICKS(code)?
+    RETURN short_url.original_url
 
 // infrastructure/
-trait UrlRepository {
-    async fn save(&self, url: &ShortUrl) -> Result<(), RepositoryError>;
-    async fn find_by_code(&self, code: &ShortCode) -> Result<Option<ShortUrl>, RepositoryError>;
-    async fn increment_clicks(&self, code: &ShortCode) -> Result<(), RepositoryError>;
-}
+INTERFACE UrlRepository
+    ASYNC FUNCTION SAVE(url: ShortUrl) → Result<Void, RepositoryError>
+    ASYNC FUNCTION FIND_BY_CODE(code: ShortCode) → Result<Optional<ShortUrl>, RepositoryError>
+    ASYNC FUNCTION INCREMENT_CLICKS(code: ShortCode) → Result<Void, RepositoryError>
 ```
 
 ## Business Value

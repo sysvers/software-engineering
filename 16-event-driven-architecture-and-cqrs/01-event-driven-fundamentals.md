@@ -35,12 +35,12 @@ These three concepts look similar on the surface, but they differ in fundamental
 
 Confusing events and commands leads to coupling. If you name an event `UserShouldBeDeleted`, you have created a command disguised as an event. The producing service is now directing the consuming service, which defeats the purpose of EDA. Events describe what happened (`UserDeleted`), not what should happen.
 
-```rust
+```text
 // WRONG: Command disguised as an event
-struct SendWelcomeEmail { user_id: Uuid, email: String }
+STRUCTURE SendWelcomeEmail { user_id, email }
 
 // RIGHT: Event -- consumers decide what to do
-struct UserRegistered { user_id: Uuid, email: String, registered_at: DateTime<Utc> }
+STRUCTURE UserRegistered { user_id, email, registered_at }
 ```
 
 When `UserRegistered` is published, the email service can send a welcome email, the analytics service can update signup metrics, and a referral service can check for referral bonuses. The producer knows nothing about any of these reactions.
@@ -49,29 +49,26 @@ When `UserRegistered` is published, the email service can send a welcome email, 
 
 **Domain events** are internal to a bounded context. They represent something significant within the domain model.
 
-```rust
+```text
 // Domain event -- internal to the Order context
-enum OrderDomainEvent {
-    ItemAdded { order_id: OrderId, item: OrderItem },
-    DiscountApplied { order_id: OrderId, discount: Money },
-    OrderSubmitted { order_id: OrderId, total: Money },
-}
+ENUMERATION OrderDomainEvent:
+    ItemAdded { order_id, item }
+    DiscountApplied { order_id, discount }
+    OrderSubmitted { order_id, total }
 ```
 
 **Integration events** cross bounded context boundaries. They are the external-facing contract between services.
 
-```rust
+```text
 // Integration event -- published to other services
-#[derive(Serialize, Deserialize)]
-struct OrderPlacedEvent {
-    event_id: Uuid,
-    order_id: String,
-    customer_id: String,
-    total_amount: f64,
-    currency: String,
-    items: Vec<OrderItemDto>,
-    occurred_at: DateTime<Utc>,
-}
+STRUCTURE OrderPlacedEvent (serializable):
+    event_id ← UUID
+    order_id ← string
+    customer_id ← string
+    total_amount ← float
+    currency ← string
+    items ← list of OrderItemDto
+    occurred_at ← datetime
 ```
 
 **Why the distinction matters:** Domain events can change freely (internal implementation detail). Integration events are part of a public contract -- changing them can break other services. Treat integration events like API versions.
@@ -80,21 +77,18 @@ struct OrderPlacedEvent {
 
 A single domain event may produce zero or more integration events. An `OrderSubmitted` domain event might produce an `OrderPlaced` integration event for external consumers, while `DiscountApplied` stays internal because no other service needs to know about discounting logic.
 
-```rust
-fn to_integration_event(domain_event: &OrderDomainEvent) -> Option<IntegrationEvent> {
-    match domain_event {
-        OrderDomainEvent::OrderSubmitted { order_id, total } => {
-            Some(IntegrationEvent::OrderPlaced {
-                event_id: Uuid::new_v4(),
-                order_id: order_id.to_string(),
-                total_amount: total.as_f64(),
-                occurred_at: Utc::now(),
-            })
-        }
+```text
+PROCEDURE TO_INTEGRATION_EVENT(domain_event):
+    MATCH domain_event:
+        OrderSubmitted { order_id, total } →
+            RETURN IntegrationEvent.OrderPlaced {
+                event_id ← NEW_UUID(),
+                order_id ← TO_STRING(order_id),
+                total_amount ← total AS float,
+                occurred_at ← NOW()
+            }
         // Internal events -- not published externally
-        _ => None,
-    }
-}
+        _ → RETURN None
 ```
 
 ## Event-Driven vs Request/Response

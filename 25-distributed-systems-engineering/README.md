@@ -22,112 +22,78 @@ There are two primary models:
 - **Client-side discovery**: The client queries a service registry (e.g., Consul, etcd, ZooKeeper) and selects an instance using a load-balancing strategy. The client bears the responsibility of choosing a healthy instance.
 - **Server-side discovery**: The client sends requests to a load balancer or API gateway, which queries the registry and forwards the request. This simplifies the client at the cost of an additional network hop.
 
-```rust
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
-
+```text
 /// Represents a single service instance in the registry.
-#[derive(Debug, Clone)]
-struct ServiceInstance {
-    id: String,
-    host: String,
-    port: u16,
-    last_heartbeat: Instant,
-}
+STRUCTURE ServiceInstance
+    id : String
+    host : String
+    port : Integer
+    last_heartbeat : Timestamp
 
 /// A simple in-memory service registry with TTL-based health tracking.
-struct ServiceRegistry {
-    services: Arc<RwLock<HashMap<String, Vec<ServiceInstance>>>>,
-    ttl: Duration,
-}
+STRUCTURE ServiceRegistry
+    services : ThreadSafe<Map<String, List<ServiceInstance>>>
+    ttl : Duration
 
-impl ServiceRegistry {
-    fn new(ttl: Duration) -> Self {
-        Self {
-            services: Arc::new(RwLock::new(HashMap::new())),
-            ttl,
-        }
-    }
+PROCEDURE ServiceRegistry.NEW(ttl) → ServiceRegistry
+    RETURN ServiceRegistry { services ← EMPTY MAP, ttl ← ttl }
 
-    /// Register a service instance under a given service name.
-    fn register(&self, service_name: &str, instance: ServiceInstance) {
-        let mut map = self.services.write().unwrap();
-        map.entry(service_name.to_string())
-            .or_insert_with(Vec::new)
-            .push(instance);
-    }
+/// Register a service instance under a given service name.
+PROCEDURE ServiceRegistry.REGISTER(service_name, instance)
+    ACQUIRE WRITE LOCK ON self.services
+    IF service_name NOT IN self.services THEN
+        self.services[service_name] ← EMPTY LIST
+    END IF
+    APPEND instance TO self.services[service_name]
 
-    /// Discover healthy instances for a given service name.
-    fn discover(&self, service_name: &str) -> Vec<ServiceInstance> {
-        let map = self.services.read().unwrap();
-        let now = Instant::now();
-        map.get(service_name)
-            .map(|instances| {
-                instances
-                    .iter()
-                    .filter(|inst| now.duration_since(inst.last_heartbeat) < self.ttl)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
+/// Discover healthy instances for a given service name.
+PROCEDURE ServiceRegistry.DISCOVER(service_name) → List<ServiceInstance>
+    ACQUIRE READ LOCK ON self.services
+    now ← CURRENT_TIME()
+    instances ← self.services[service_name]
+    IF instances IS NULL THEN RETURN EMPTY LIST
+    RETURN FILTER instances WHERE (now - inst.last_heartbeat) < self.ttl
 
-    /// Remove stale instances that have not sent a heartbeat within the TTL.
-    fn evict_stale(&self) {
-        let mut map = self.services.write().unwrap();
-        let now = Instant::now();
-        for instances in map.values_mut() {
-            instances.retain(|inst| now.duration_since(inst.last_heartbeat) < self.ttl);
-        }
-    }
-}
+/// Remove stale instances that have not sent a heartbeat within the TTL.
+PROCEDURE ServiceRegistry.EVICT_STALE()
+    ACQUIRE WRITE LOCK ON self.services
+    now ← CURRENT_TIME()
+    FOR EACH instances IN self.services.VALUES() DO
+        RETAIN instances WHERE (now - inst.last_heartbeat) < self.ttl
+    END FOR
 ```
 
 ### Distributed Tracing
 
 When a single user request fans out across dozens of services, understanding latency and diagnosing failures requires tracing the entire call graph. Distributed tracing assigns a unique trace ID to each incoming request and propagates it through every downstream call. Each service records a span -- a named, timed segment of work -- and exports it to a collector (e.g., Jaeger, Zipkin, or an OpenTelemetry backend).
 
-```rust
-use std::time::Instant;
-
+```text
 /// A minimal representation of a trace span.
-struct Span {
-    trace_id: String,
-    span_id: String,
-    parent_span_id: Option<String>,
-    operation_name: String,
-    start: Instant,
-    duration_ms: Option<u128>,
-    tags: Vec<(String, String)>,
-}
+STRUCTURE Span
+    trace_id : String
+    span_id : String
+    parent_span_id : Optional<String>
+    operation_name : String
+    start : Timestamp
+    duration_ms : Optional<Integer>
+    tags : List<(String, String)>
 
-impl Span {
-    fn start_span(
-        trace_id: &str,
-        span_id: &str,
-        parent: Option<&str>,
-        operation: &str,
-    ) -> Self {
-        Span {
-            trace_id: trace_id.to_string(),
-            span_id: span_id.to_string(),
-            parent_span_id: parent.map(String::from),
-            operation_name: operation.to_string(),
-            start: Instant::now(),
-            duration_ms: None,
-            tags: Vec::new(),
-        }
+PROCEDURE Span.START_SPAN(trace_id, span_id, parent, operation) → Span
+    RETURN Span {
+        trace_id ← trace_id,
+        span_id ← span_id,
+        parent_span_id ← parent,
+        operation_name ← operation,
+        start ← CURRENT_TIME(),
+        duration_ms ← NULL,
+        tags ← EMPTY LIST
     }
 
-    fn finish(&mut self) {
-        self.duration_ms = Some(self.start.elapsed().as_millis());
-    }
+PROCEDURE Span.FINISH()
+    self.duration_ms ← ELAPSED_MILLIS(self.start)
 
-    fn set_tag(&mut self, key: &str, value: &str) {
-        self.tags.push((key.to_string(), value.to_string()));
-    }
-}
+PROCEDURE Span.SET_TAG(key, value)
+    APPEND (key, value) TO self.tags
 ```
 
 ### Data Replication Patterns
@@ -138,38 +104,27 @@ Replication copies data across multiple nodes to improve availability and read t
 - **Multi-leader**: Multiple nodes accept writes and synchronize with each other. Useful for multi-datacenter deployments but introduces write conflicts that must be resolved (last-writer-wins, CRDTs, application-level merging).
 - **Leaderless (Dynamo-style)**: Clients write to and read from multiple replicas. Consistency is tuned via quorum parameters (W + R > N for strong consistency).
 
-```rust
+```text
 /// Quorum parameters for a leaderless replication system.
-struct QuorumConfig {
-    num_replicas: usize,      // N
-    write_quorum: usize,      // W
-    read_quorum: usize,       // R
-}
+STRUCTURE QuorumConfig
+    num_replicas : Integer      // N
+    write_quorum : Integer      // W
+    read_quorum : Integer       // R
 
-impl QuorumConfig {
-    fn new(n: usize, w: usize, r: usize) -> Self {
-        assert!(w + r > n, "W + R must exceed N for strong consistency");
-        assert!(w <= n && r <= n, "Quorum sizes cannot exceed replica count");
-        Self {
-            num_replicas: n,
-            write_quorum: w,
-            read_quorum: r,
-        }
-    }
+PROCEDURE QuorumConfig.NEW(n, w, r) → QuorumConfig
+    ASSERT w + r > n, "W + R must exceed N for strong consistency"
+    ASSERT w ≤ n AND r ≤ n, "Quorum sizes cannot exceed replica count"
+    RETURN QuorumConfig { num_replicas ← n, write_quorum ← w, read_quorum ← r }
 
-    fn is_strongly_consistent(&self) -> bool {
-        self.write_quorum + self.read_quorum > self.num_replicas
-    }
+PROCEDURE QuorumConfig.IS_STRONGLY_CONSISTENT() → Boolean
+    RETURN self.write_quorum + self.read_quorum > self.num_replicas
 
-    /// Check if we received enough acknowledgments.
-    fn write_succeeded(&self, acks: usize) -> bool {
-        acks >= self.write_quorum
-    }
+/// Check if we received enough acknowledgments.
+PROCEDURE QuorumConfig.WRITE_SUCCEEDED(acks) → Boolean
+    RETURN acks ≥ self.write_quorum
 
-    fn read_succeeded(&self, responses: usize) -> bool {
-        responses >= self.read_quorum
-    }
-}
+PROCEDURE QuorumConfig.READ_SUCCEEDED(responses) → Boolean
+    RETURN responses ≥ self.read_quorum
 ```
 
 ### Sharding Strategies
@@ -180,61 +135,42 @@ Sharding (also called partitioning) splits data across multiple nodes so that no
 - **Hash-based sharding**: A hash function maps keys to shards uniformly. Distributes load evenly but makes range queries difficult.
 - **Consistent hashing**: Nodes are placed on a hash ring. Keys are assigned to the next node clockwise on the ring. Adding or removing a node only redistributes a fraction of keys, which is critical for elastic scaling.
 
-```rust
-use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
-
+```text
 /// A consistent hash ring supporting virtual nodes for better distribution.
-struct ConsistentHashRing {
-    ring: BTreeMap<u64, String>,
-    virtual_nodes_per_physical: usize,
-}
+STRUCTURE ConsistentHashRing
+    ring : SortedMap<Integer, String>
+    virtual_nodes_per_physical : Integer
 
-impl ConsistentHashRing {
-    fn new(virtual_nodes: usize) -> Self {
-        Self {
-            ring: BTreeMap::new(),
-            virtual_nodes_per_physical: virtual_nodes,
-        }
-    }
+PROCEDURE ConsistentHashRing.NEW(virtual_nodes) → ConsistentHashRing
+    RETURN ConsistentHashRing { ring ← EMPTY SORTED MAP, virtual_nodes_per_physical ← virtual_nodes }
 
-    fn hash_key(key: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        hasher.finish()
-    }
+PROCEDURE HASH_KEY(key) → Integer
+    RETURN HASH(key)
 
-    fn add_node(&mut self, node_id: &str) {
-        for i in 0..self.virtual_nodes_per_physical {
-            let virtual_key = format!("{}#{}", node_id, i);
-            let hash = Self::hash_key(&virtual_key);
-            self.ring.insert(hash, node_id.to_string());
-        }
-    }
+PROCEDURE ConsistentHashRing.ADD_NODE(node_id)
+    FOR i ← 0 TO self.virtual_nodes_per_physical - 1 DO
+        virtual_key ← node_id + "#" + i
+        hash ← HASH_KEY(virtual_key)
+        self.ring[hash] ← node_id
+    END FOR
 
-    fn remove_node(&mut self, node_id: &str) {
-        for i in 0..self.virtual_nodes_per_physical {
-            let virtual_key = format!("{}#{}", node_id, i);
-            let hash = Self::hash_key(&virtual_key);
-            self.ring.remove(&hash);
-        }
-    }
+PROCEDURE ConsistentHashRing.REMOVE_NODE(node_id)
+    FOR i ← 0 TO self.virtual_nodes_per_physical - 1 DO
+        virtual_key ← node_id + "#" + i
+        hash ← HASH_KEY(virtual_key)
+        DELETE self.ring[hash]
+    END FOR
 
-    /// Find the node responsible for a given key.
-    fn get_node(&self, key: &str) -> Option<&String> {
-        if self.ring.is_empty() {
-            return None;
-        }
-        let hash = Self::hash_key(key);
-        // Find the first node with a hash >= the key's hash (clockwise).
-        self.ring
-            .range(hash..)
-            .next()
-            .or_else(|| self.ring.iter().next()) // Wrap around the ring.
-            .map(|(_, node)| node)
-    }
-}
+/// Find the node responsible for a given key.
+PROCEDURE ConsistentHashRing.GET_NODE(key) → Optional<String>
+    IF self.ring IS EMPTY THEN RETURN NULL
+    hash ← HASH_KEY(key)
+    // Find the first node with a hash ≥ the key's hash (clockwise).
+    node ← FIRST ENTRY IN self.ring WHERE entry.key ≥ hash
+    IF node IS NULL THEN
+        node ← FIRST ENTRY IN self.ring    // Wrap around the ring.
+    END IF
+    RETURN node.value
 ```
 
 ### Distributed Caching
@@ -245,111 +181,70 @@ Caching in distributed systems reduces latency and load on backend stores. Patte
 - **Write-through**: Every write goes to both the cache and the database. Ensures consistency at the cost of higher write latency.
 - **Write-behind (write-back)**: Writes go to the cache first and are asynchronously flushed to the database. Low write latency but risks data loss if the cache node fails before flushing.
 
-```rust
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+```text
+STRUCTURE CacheEntry<V>
+    value : V
+    inserted_at : Timestamp
+    ttl : Duration
 
-struct CacheEntry<V> {
-    value: V,
-    inserted_at: Instant,
-    ttl: Duration,
-}
-
-impl<V> CacheEntry<V> {
-    fn is_expired(&self) -> bool {
-        self.inserted_at.elapsed() > self.ttl
-    }
-}
+PROCEDURE CacheEntry.IS_EXPIRED() → Boolean
+    RETURN ELAPSED(self.inserted_at) > self.ttl
 
 /// A cache-aside implementation with TTL-based expiration.
-struct CacheAside<V: Clone> {
-    store: HashMap<String, CacheEntry<V>>,
-    default_ttl: Duration,
-}
+STRUCTURE CacheAside<V>
+    store : Map<String, CacheEntry<V>>
+    default_ttl : Duration
 
-impl<V: Clone> CacheAside<V> {
-    fn new(default_ttl: Duration) -> Self {
-        Self {
-            store: HashMap::new(),
-            default_ttl,
-        }
+/// Attempt to read from cache. Returns NULL on miss or expiration.
+PROCEDURE CacheAside.GET(key) → Optional<V>
+    entry ← self.store[key]
+    IF entry IS NOT NULL THEN
+        IF NOT entry.IS_EXPIRED() THEN
+            RETURN entry.value
+        END IF
+        // Expired -- remove and treat as miss.
+        DELETE self.store[key]
+    END IF
+    RETURN NULL
+
+/// Populate the cache after a database read.
+PROCEDURE CacheAside.SET(key, value)
+    self.store[key] ← CacheEntry {
+        value ← value,
+        inserted_at ← CURRENT_TIME(),
+        ttl ← self.default_ttl
     }
 
-    /// Attempt to read from cache. Returns None on miss or expiration.
-    fn get(&mut self, key: &str) -> Option<V> {
-        if let Some(entry) = self.store.get(key) {
-            if !entry.is_expired() {
-                return Some(entry.value.clone());
-            }
-            // Expired -- remove and treat as miss.
-            self.store.remove(key);
-        }
-        None
-    }
-
-    /// Populate the cache after a database read.
-    fn set(&mut self, key: String, value: V) {
-        self.store.insert(
-            key,
-            CacheEntry {
-                value,
-                inserted_at: Instant::now(),
-                ttl: self.default_ttl,
-            },
-        );
-    }
-
-    /// Invalidate a cache entry, typically after a write to the database.
-    fn invalidate(&mut self, key: &str) {
-        self.store.remove(key);
-    }
-}
+/// Invalidate a cache entry, typically after a write to the database.
+PROCEDURE CacheAside.INVALIDATE(key)
+    DELETE self.store[key]
 ```
 
 ### Idempotency
 
 In distributed systems, network failures and retries mean that a request may be delivered more than once. An operation is idempotent if performing it multiple times produces the same result as performing it once. Idempotency keys -- typically UUIDs attached to each request -- allow servers to detect and deduplicate repeated operations.
 
-```rust
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
+```text
 /// Stores results of previously processed requests for deduplication.
-struct IdempotencyStore<R: Clone> {
-    entries: HashMap<String, (R, Instant)>,
-    retention: Duration,
-}
+STRUCTURE IdempotencyStore<R>
+    entries : Map<String, (R, Timestamp)>
+    retention : Duration
 
-impl<R: Clone> IdempotencyStore<R> {
-    fn new(retention: Duration) -> Self {
-        Self {
-            entries: HashMap::new(),
-            retention,
-        }
-    }
+/// Check whether a request with this idempotency key was already processed.
+PROCEDURE IdempotencyStore.GET_EXISTING_RESULT(key) → Optional<R>
+    (result, created_at) ← self.entries[key]
+    IF result IS NOT NULL AND ELAPSED(created_at) < self.retention THEN
+        RETURN result
+    END IF
+    RETURN NULL
 
-    /// Check whether a request with this idempotency key was already processed.
-    fn get_existing_result(&self, key: &str) -> Option<R> {
-        self.entries.get(key).and_then(|(result, created_at)| {
-            if created_at.elapsed() < self.retention {
-                Some(result.clone())
-            } else {
-                None
-            }
-        })
-    }
+/// Record the result of a processed request.
+PROCEDURE IdempotencyStore.RECORD(key, result)
+    self.entries[key] ← (result, CURRENT_TIME())
 
-    /// Record the result of a processed request.
-    fn record(&mut self, key: String, result: R) {
-        self.entries.insert(key, (result, Instant::now()));
-    }
-
-    /// Purge entries older than the retention period.
-    fn purge_expired(&mut self) {
-        self.entries
-            .retain(|_, (_, created_at)| created_at.elapsed() < self.retention);
-    }
-}
+/// Purge entries older than the retention period.
+PROCEDURE IdempotencyStore.PURGE_EXPIRED()
+    RETAIN entries WHERE ELAPSED(created_at) < self.retention
 ```
 
 ### Saga Pattern
@@ -359,72 +254,45 @@ The saga pattern manages distributed transactions by breaking them into a sequen
 - **Choreography**: Each service publishes events, and downstream services react. No central coordinator but harder to reason about the overall flow.
 - **Orchestration**: A central saga orchestrator directs each step and triggers compensations on failure. Easier to understand but introduces a single coordination point.
 
-```rust
-use std::fmt;
-
+```text
 /// Represents a single step in a saga with its action and compensation.
-struct SagaStep {
-    name: String,
-    /// Returns Ok(()) on success, Err(reason) on failure.
-    execute: Box<dyn Fn() -> Result<(), String>>,
-    /// Compensating action to undo this step.
-    compensate: Box<dyn Fn() -> Result<(), String>>,
-}
-
-impl fmt::Debug for SagaStep {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SagaStep({})", self.name)
-    }
-}
+STRUCTURE SagaStep
+    name : String
+    execute : Function → Result        // Returns Ok on success, Error(reason) on failure
+    compensate : Function → Result     // Compensating action to undo this step
 
 /// An orchestration-based saga executor.
-struct SagaOrchestrator {
-    steps: Vec<SagaStep>,
-}
+STRUCTURE SagaOrchestrator
+    steps : List<SagaStep>
 
-impl SagaOrchestrator {
-    fn new() -> Self {
-        Self { steps: Vec::new() }
-    }
+/// Execute the saga. On failure, compensate all completed steps in reverse.
+PROCEDURE SagaOrchestrator.EXECUTE() → Result
+    completed ← EMPTY LIST
 
-    fn add_step(&mut self, step: SagaStep) {
-        self.steps.push(step);
-    }
+    FOR i ← 0 TO LENGTH(self.steps) - 1 DO
+        step ← self.steps[i]
+        PRINT "Executing step: " + step.name
+        result ← step.EXECUTE()
+        IF result IS OK THEN
+            APPEND i TO completed
+        ELSE
+            reason ← result.ERROR
+            PRINT "Step '" + step.name + "' failed: " + reason + ". Initiating compensation."
+            // Compensate in reverse order.
+            FOR EACH idx IN REVERSE(completed) DO
+                comp_step ← self.steps[idx]
+                PRINT "Compensating step: " + comp_step.name
+                comp_result ← comp_step.COMPENSATE()
+                IF comp_result IS ERROR THEN
+                    PRINT "Compensation for '" + comp_step.name + "' failed: "
+                          + comp_result.ERROR + ". Manual intervention required."
+                END IF
+            END FOR
+            RETURN Error("Saga failed at step '" + step.name + "': " + reason)
+        END IF
+    END FOR
 
-    /// Execute the saga. On failure, compensate all completed steps in reverse.
-    fn execute(&self) -> Result<(), String> {
-        let mut completed: Vec<usize> = Vec::new();
-
-        for (i, step) in self.steps.iter().enumerate() {
-            println!("Executing step: {}", step.name);
-            match (step.execute)() {
-                Ok(()) => {
-                    completed.push(i);
-                }
-                Err(reason) => {
-                    eprintln!(
-                        "Step '{}' failed: {}. Initiating compensation.",
-                        step.name, reason
-                    );
-                    // Compensate in reverse order.
-                    for &idx in completed.iter().rev() {
-                        let comp_step = &self.steps[idx];
-                        println!("Compensating step: {}", comp_step.name);
-                        if let Err(comp_err) = (comp_step.compensate)() {
-                            eprintln!(
-                                "Compensation for '{}' failed: {}. Manual intervention required.",
-                                comp_step.name, comp_err
-                            );
-                        }
-                    }
-                    return Err(format!("Saga failed at step '{}': {}", step.name, reason));
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
+    RETURN Ok
 ```
 
 ### Distributed Transactions

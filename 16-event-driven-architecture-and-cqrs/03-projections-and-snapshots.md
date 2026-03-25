@@ -29,55 +29,31 @@ Projections (derived from events):
 
 A projection subscribes to events and maintains a read-optimized data structure (typically a database table). Each projection handles only the events it cares about.
 
-```rust
+```text
 /// A projection that builds a flat order list for the admin dashboard.
-struct OrderListProjection {
-    pool: PgPool,
-}
+STRUCTURE OrderListProjection:
+    pool ← PgPool
 
-impl OrderListProjection {
-    async fn handle_event(&self, event: &OrderEvent) -> Result<(), ProjectionError> {
-        match event {
-            OrderEvent::OrderPlaced { order_id, customer_id, items, placed_at } => {
-                let total: f64 = items.iter().map(|i| i.price).sum();
-                sqlx::query(
-                    "INSERT INTO order_list_view (id, customer_id, item_count, total, status, placed_at)
-                     VALUES ($1, $2, $3, $4, 'placed', $5)"
-                )
-                .bind(order_id)
-                .bind(customer_id)
-                .bind(items.len() as i32)
-                .bind(total)
-                .bind(placed_at)
-                .execute(&self.pool)
-                .await?;
-            }
-            OrderEvent::OrderShipped { order_id, shipped_at, tracking_number } => {
-                sqlx::query(
-                    "UPDATE order_list_view SET status = 'shipped', tracking = $2, shipped_at = $3
-                     WHERE id = $1"
-                )
-                .bind(order_id)
-                .bind(tracking_number)
-                .bind(shipped_at)
-                .execute(&self.pool)
-                .await?;
-            }
-            OrderEvent::OrderDelivered { order_id, delivered_at } => {
-                sqlx::query(
-                    "UPDATE order_list_view SET status = 'delivered', delivered_at = $2
-                     WHERE id = $1"
-                )
-                .bind(order_id)
-                .bind(delivered_at)
-                .execute(&self.pool)
-                .await?;
-            }
-            _ => {} // Ignore events this projection does not care about
-        }
-        Ok(())
-    }
-}
+PROCEDURE HANDLE_EVENT(projection, event):
+    MATCH event:
+        OrderPlaced { order_id, customer_id, items, placed_at } →
+            total ← SUM OF item.price FOR EACH item IN items
+            AWAIT EXECUTE projection.pool:
+                "INSERT INTO order_list_view (id, customer_id, item_count, total, status, placed_at)
+                 VALUES (order_id, customer_id, LENGTH(items), total, 'placed', placed_at)"
+
+        OrderShipped { order_id, shipped_at, tracking_number } →
+            AWAIT EXECUTE projection.pool:
+                "UPDATE order_list_view SET status = 'shipped', tracking = tracking_number,
+                 shipped_at = shipped_at WHERE id = order_id"
+
+        OrderDelivered { order_id, delivered_at } →
+            AWAIT EXECUTE projection.pool:
+                "UPDATE order_list_view SET status = 'delivered', delivered_at = delivered_at
+                 WHERE id = order_id"
+
+        _ → // Ignore events this projection does not care about
+    RETURN Ok
 ```
 
 ## Multiple Projections from the Same Events
@@ -86,67 +62,44 @@ This is where projections become powerful. The same `OrderPlaced`, `OrderShipped
 
 ### Revenue Dashboard Projection
 
-```rust
-struct RevenueDashboardProjection {
-    pool: PgPool,
-}
+```text
+STRUCTURE RevenueDashboardProjection:
+    pool ← PgPool
 
-impl RevenueDashboardProjection {
-    async fn handle_event(&self, event: &OrderEvent) -> Result<(), ProjectionError> {
-        match event {
-            OrderEvent::OrderPlaced { placed_at, items, .. } => {
-                let total: f64 = items.iter().map(|i| i.price).sum();
-                let month = placed_at.format("%Y-%m").to_string();
-                sqlx::query(
-                    "INSERT INTO revenue_by_month (month, total_revenue, order_count)
-                     VALUES ($1, $2, 1)
-                     ON CONFLICT (month) DO UPDATE
-                     SET total_revenue = revenue_by_month.total_revenue + $2,
-                         order_count = revenue_by_month.order_count + 1"
-                )
-                .bind(&month)
-                .bind(total)
-                .execute(&self.pool)
-                .await?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-}
+PROCEDURE HANDLE_EVENT(projection, event):
+    MATCH event:
+        OrderPlaced { placed_at, items, ... } →
+            total ← SUM OF item.price FOR EACH item IN items
+            month ← FORMAT(placed_at, "YYYY-MM")
+            AWAIT EXECUTE projection.pool:
+                "INSERT INTO revenue_by_month (month, total_revenue, order_count)
+                 VALUES (month, total, 1)
+                 ON CONFLICT (month) DO UPDATE
+                 SET total_revenue = total_revenue + total,
+                     order_count = order_count + 1"
+        _ → // ignore
+    RETURN Ok
 ```
 
 ### Customer Activity Projection
 
-```rust
-struct CustomerActivityProjection {
-    pool: PgPool,
-}
+```text
+STRUCTURE CustomerActivityProjection:
+    pool ← PgPool
 
-impl CustomerActivityProjection {
-    async fn handle_event(&self, event: &OrderEvent) -> Result<(), ProjectionError> {
-        match event {
-            OrderEvent::OrderPlaced { customer_id, items, placed_at, .. } => {
-                let total: f64 = items.iter().map(|i| i.price).sum();
-                sqlx::query(
-                    "INSERT INTO customer_activity (customer_id, total_spent, order_count, last_order_at)
-                     VALUES ($1, $2, 1, $3)
-                     ON CONFLICT (customer_id) DO UPDATE
-                     SET total_spent = customer_activity.total_spent + $2,
-                         order_count = customer_activity.order_count + 1,
-                         last_order_at = $3"
-                )
-                .bind(customer_id)
-                .bind(total)
-                .bind(placed_at)
-                .execute(&self.pool)
-                .await?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-}
+PROCEDURE HANDLE_EVENT(projection, event):
+    MATCH event:
+        OrderPlaced { customer_id, items, placed_at, ... } →
+            total ← SUM OF item.price FOR EACH item IN items
+            AWAIT EXECUTE projection.pool:
+                "INSERT INTO customer_activity (customer_id, total_spent, order_count, last_order_at)
+                 VALUES (customer_id, total, 1, placed_at)
+                 ON CONFLICT (customer_id) DO UPDATE
+                 SET total_spent = total_spent + total,
+                     order_count = order_count + 1,
+                     last_order_at = placed_at"
+        _ → // ignore
+    RETURN Ok
 ```
 
 Three projections, same events, completely different structures. Adding the fourth projection (say, a geographic sales heatmap) requires no changes to the event producers.
@@ -159,32 +112,21 @@ Projections are disposable. If a projection has a bug, or requirements change, y
 2. Create new tables with the corrected schema.
 3. Replay all events from the event store through the new projection logic.
 
-```rust
-async fn rebuild_projection(
-    store: &EventStore,
-    projection: &impl Projection,
-) -> Result<(), RebuildError> {
-    projection.reset().await?;  // DROP and recreate tables
+```text
+PROCEDURE REBUILD_PROJECTION(store, projection):
+    AWAIT projection.RESET()  // DROP and recreate tables
 
-    let mut position: u64 = 0;
-    loop {
-        let batch = store.read_all_events(position, 1000).await?;
-        if batch.is_empty() {
-            break;
-        }
-        for event in &batch {
-            projection.handle_event(event).await?;
-        }
-        position += batch.len() as u64;
-    }
+    position ← 0
+    LOOP:
+        batch ← AWAIT store.READ_ALL_EVENTS(position, 1000)
+        IF batch IS empty THEN BREAK
+        FOR EACH event IN batch:
+            AWAIT projection.HANDLE_EVENT(event)
+        position ← position + LENGTH(batch)
 
-    Ok(())
-}
-
-trait Projection {
-    async fn handle_event(&self, event: &StoredEvent) -> Result<(), ProjectionError>;
-    async fn reset(&self) -> Result<(), ProjectionError>;
-}
+INTERFACE Projection:
+    PROCEDURE HANDLE_EVENT(event) → Result
+    PROCEDURE RESET() → Result
 ```
 
 **Important consideration:** Rebuilding a projection from millions of events takes time. Plan for this. Options include:
@@ -205,22 +147,14 @@ CREATE TABLE projection_checkpoints (
 );
 ```
 
-```rust
-async fn run_projection(
-    store: &EventStore,
-    projection: &impl Projection,
-    name: &str,
-    pool: &PgPool,
-) -> Result<(), ProjectionError> {
-    let last_pos = get_checkpoint(pool, name).await?.unwrap_or(0);
-    let events = store.read_all_events(last_pos, 500).await?;
+```text
+PROCEDURE RUN_PROJECTION(store, projection, name, pool):
+    last_pos ← AWAIT GET_CHECKPOINT(pool, name) OR DEFAULT 0
+    events ← AWAIT store.READ_ALL_EVENTS(last_pos, 500)
 
-    for event in &events {
-        projection.handle_event(event).await?;
-        save_checkpoint(pool, name, event.position).await?;
-    }
-    Ok(())
-}
+    FOR EACH event IN events:
+        AWAIT projection.HANDLE_EVENT(event)
+        AWAIT SAVE_CHECKPOINT(pool, name, event.position)
 ```
 
 ## Snapshots
@@ -248,58 +182,34 @@ CREATE TABLE snapshots (
 
 ### Rust Snapshot Implementation
 
-```rust
-impl EventStore {
-    async fn load_with_snapshot<A: Aggregate + DeserializeOwned>(
-        &self,
-        aggregate_id: Uuid,
-    ) -> Result<Option<A>, EventStoreError> {
-        // Try loading the latest snapshot
-        let snapshot = sqlx::query!(
-            "SELECT version, state FROM snapshots
-             WHERE aggregate_id = $1
-             ORDER BY version DESC LIMIT 1",
-            aggregate_id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+```text
+PROCEDURE LOAD_WITH_SNAPSHOT(store, aggregate_id):
+    // Try loading the latest snapshot
+    snapshot ← AWAIT QUERY store.pool:
+        "SELECT version, state FROM snapshots
+         WHERE aggregate_id = aggregate_id
+         ORDER BY version DESC LIMIT 1"
 
-        let (mut aggregate, from_version) = match snapshot {
-            Some(snap) => {
-                let agg: A = serde_json::from_value(snap.state)?;
-                (Some(agg), snap.version)
-            }
-            None => (None, 0),
-        };
+    IF snapshot IS present THEN
+        aggregate ← PARSE_JSON(snapshot.state) AS Aggregate
+        from_version ← snapshot.version
+    ELSE
+        aggregate ← None
+        from_version ← 0
 
-        // Replay only events after the snapshot
-        let events = self.load_after_version(aggregate_id, from_version).await?;
-        for event in &events {
-            aggregate = A::apply(aggregate, event);
-        }
+    // Replay only events after the snapshot
+    events ← AWAIT LOAD_AFTER_VERSION(store, aggregate_id, from_version)
+    FOR EACH event IN events:
+        aggregate ← APPLY(aggregate, event)
 
-        Ok(aggregate)
-    }
+    RETURN aggregate
 
-    async fn save_snapshot<A: Aggregate + Serialize>(
-        &self,
-        aggregate: &A,
-    ) -> Result<(), EventStoreError> {
-        let state = serde_json::to_value(aggregate)?;
-        sqlx::query(
-            "INSERT INTO snapshots (aggregate_id, aggregate_type, version, state)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (aggregate_id, version) DO NOTHING"
-        )
-        .bind(aggregate.id())
-        .bind(A::aggregate_type())
-        .bind(aggregate.version())
-        .bind(&state)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-}
+PROCEDURE SAVE_SNAPSHOT(store, aggregate):
+    state ← TO_JSON(aggregate)
+    AWAIT EXECUTE store.pool:
+        "INSERT INTO snapshots (aggregate_id, aggregate_type, version, state)
+         VALUES (aggregate.id, aggregate.type, aggregate.version, state)
+         ON CONFLICT (aggregate_id, version) DO NOTHING"
 ```
 
 ### When to Snapshot

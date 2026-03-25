@@ -6,13 +6,12 @@ Designing for concurrent access is critical in any system handling multiple requ
 
 The simplest and most scalable approach: each request handler gets its own copy of the data it needs. No shared mutable state.
 
-```rust
+```text
 // Each request gets its own connection from the pool
-async fn handle_request(pool: &PgPool) -> Result<Response, Error> {
-    let conn = pool.acquire().await?;  // Gets a connection, doesn't share it
-    let data = query(&conn).await?;
-    Ok(Response::json(data))
-}
+ASYNC FUNCTION HANDLE_REQUEST(pool: PgPool) → Result<Response, Error>
+    conn ← AWAIT pool.ACQUIRE()?    // Gets a connection, doesn't share it
+    data ← AWAIT QUERY(conn)?
+    RETURN Response.JSON(data)
 ```
 
 The connection pool itself is shared, but each connection is exclusively owned by one handler. No locking, no contention, no data races.
@@ -29,17 +28,14 @@ When shared state is necessary, Rust provides safe concurrency primitives.
 
 `Arc<T>` (Atomic Reference Counted) lets multiple threads hold a reference to the same data. The data is dropped when the last reference goes away.
 
-```rust
-use std::sync::Arc;
+```text
+config ← SHARED_REF(AppConfig.LOAD())
 
-let config = Arc::new(AppConfig::load());
-
-// Clone the Arc (cheap — just increments a counter), not the data
-let config_clone = config.clone();
-tokio::spawn(async move {
+// Clone the shared reference (cheap -- just increments a counter), not the data
+config_clone ← CLONE_REF(config)
+SPAWN ASYNC TASK
     // This task owns a reference to the same config
-    println!("Port: {}", config_clone.port);
-});
+    PRINT "Port: " + config_clone.port
 ```
 
 `Arc` alone only allows shared immutable access. For mutation, combine it with a lock.
@@ -48,88 +44,79 @@ tokio::spawn(async move {
 
 `Mutex<T>` ensures only one thread accesses the data at a time. All others wait.
 
-```rust
-use std::sync::{Arc, Mutex};
-
-let counter = Arc::new(Mutex::new(0u64));
+```text
+counter ← SHARED_REF(MUTEX(0))
 
 // In a request handler
-let mut guard = counter.lock().unwrap();
-*guard += 1;
-// Lock is released when `guard` is dropped
+ACQUIRE LOCK ON counter
+    counter.value ← counter.value + 1
+// Lock is released automatically
 ```
 
 **Tokio-aware Mutex:** For async code, use `tokio::sync::Mutex` if you need to hold the lock across `.await` points. For short critical sections (no `.await` inside), `std::sync::Mutex` is faster.
 
-```rust
-use tokio::sync::Mutex;
+```text
+state ← SHARED_REF(ASYNC_MUTEX(NEW AppState))
 
-let state = Arc::new(Mutex::new(AppState::default()));
-
-async fn handler(state: Arc<Mutex<AppState>>) {
-    let mut guard = state.lock().await;
-    guard.counter += 1;
-    // Safe to .await here because it's a tokio Mutex
-    guard.save_to_db().await;
-}
+ASYNC FUNCTION HANDLER(state: Shared<AsyncMutex<AppState>>)
+    AWAIT ACQUIRE LOCK ON state
+        state.counter ← state.counter + 1
+        // Safe to await here because it is an async-aware mutex
+        AWAIT state.SAVE_TO_DB()
+    RELEASE LOCK
 ```
 
 ### RwLock: Multiple Readers, One Writer
 
 When reads vastly outnumber writes, `RwLock` gives better throughput. Multiple readers can access data simultaneously; writers get exclusive access.
 
-```rust
-use std::sync::{Arc, RwLock};
+```text
+RECORD RateLimiter
+    requests: Shared<ReadWriteLock<Map<IpAddr, List<Instant>>>>
+    max_requests: Integer
+    window: Duration
 
-struct RateLimiter {
-    requests: Arc<RwLock<HashMap<IpAddr, Vec<Instant>>>>,
-    max_requests: usize,
-    window: Duration,
-}
+FUNCTION IS_ALLOWED(limiter: RateLimiter, ip: IpAddr) → Boolean
+    ACQUIRE WRITE LOCK ON limiter.requests
+    now ← CURRENT_INSTANT()
+    window_start ← now - limiter.window
 
-impl RateLimiter {
-    fn is_allowed(&self, ip: IpAddr) -> bool {
-        let mut requests = self.requests.write().unwrap();
-        let now = Instant::now();
-        let window_start = now - self.window;
+    entry ← requests.GET_OR_INSERT(ip, EMPTY_LIST)
+    REMOVE all t FROM entry WHERE t ≤ window_start
 
-        let entry = requests.entry(ip).or_insert_with(Vec::new);
-        entry.retain(|&t| t > window_start);
+    IF LENGTH(entry) < limiter.max_requests THEN
+        APPEND now TO entry
+        RETURN TRUE
+    ELSE
+        RETURN FALSE
+    RELEASE LOCK
 
-        if entry.len() < self.max_requests {
-            entry.push(now);
-            true
-        } else {
-            false
-        }
-    }
-
-    fn current_count(&self, ip: IpAddr) -> usize {
-        let requests = self.requests.read().unwrap();  // Multiple readers OK
-        requests.get(&ip).map(|v| v.len()).unwrap_or(0)
-    }
-}
+FUNCTION CURRENT_COUNT(limiter: RateLimiter, ip: IpAddr) → Integer
+    ACQUIRE READ LOCK ON limiter.requests    // Multiple readers OK
+    RETURN LENGTH(requests.GET(ip)) OR 0
+    RELEASE LOCK
 ```
 
 ### Avoiding Common Lock Pitfalls
 
 **Hold locks for the minimum time:**
 
-```rust
-// Bad — holds lock while doing I/O
-let mut guard = state.lock().unwrap();
-let data = guard.get_data();
-let result = expensive_computation(data);     // Lock held during computation
-guard.update(result);
+```text
+// Bad -- holds lock while doing I/O
+ACQUIRE LOCK ON state
+    data ← state.GET_DATA()
+    result ← EXPENSIVE_COMPUTATION(data)     // Lock held during computation
+    state.UPDATE(result)
+RELEASE LOCK
 
-// Good — copy data out, release lock, compute, reacquire
-let data = {
-    let guard = state.lock().unwrap();
-    guard.get_data().clone()  // Clone and release lock
-};
-let result = expensive_computation(data);     // No lock held
-let mut guard = state.lock().unwrap();
-guard.update(result);
+// Good -- copy data out, release lock, compute, reacquire
+ACQUIRE LOCK ON state
+    data ← COPY(state.GET_DATA())
+RELEASE LOCK                                  // Release lock
+result ← EXPENSIVE_COMPUTATION(data)          // No lock held
+ACQUIRE LOCK ON state
+    state.UPDATE(result)
+RELEASE LOCK
 ```
 
 **Avoid nested locks** (risk of deadlock): never acquire lock A then lock B if another thread might acquire B then A.
@@ -140,46 +127,32 @@ When possible, use channels instead of shared state. Each component owns its dat
 
 ### MPSC Channels (Multiple Producer, Single Consumer)
 
-```rust
-use tokio::sync::{mpsc, oneshot};
+```text
+ENUM Command
+    IncrementCounter { name: String, amount: Integer }
+    GetCounter { name: String, reply: Channel<Integer> }
 
-enum Command {
-    IncrementCounter { name: String, amount: u64 },
-    GetCounter { name: String, reply: oneshot::Sender<u64> },
-}
+ASYNC FUNCTION COUNTER_ACTOR(rx: Receiver<Command>)
+    counters ← EMPTY Map<String, Integer>
 
-async fn counter_actor(mut rx: mpsc::Receiver<Command>) {
-    let mut counters: HashMap<String, u64> = HashMap::new();
-
-    while let Some(cmd) = rx.recv().await {
-        match cmd {
-            Command::IncrementCounter { name, amount } => {
-                *counters.entry(name).or_insert(0) += amount;
-            }
-            Command::GetCounter { name, reply } => {
-                let value = counters.get(&name).copied().unwrap_or(0);
-                let _ = reply.send(value);
-            }
-        }
-    }
-}
+    WHILE cmd ← AWAIT rx.RECEIVE()
+        MATCH cmd
+            CASE IncrementCounter { name, amount }:
+                IF name NOT IN counters THEN
+                    counters[name] ← 0
+                counters[name] ← counters[name] + amount
+            CASE GetCounter { name, reply }:
+                value ← counters.GET(name) OR 0
+                SEND value TO reply
 
 // Usage from request handlers
-async fn handle_increment(tx: mpsc::Sender<Command>) {
-    tx.send(Command::IncrementCounter {
-        name: "page_views".into(),
-        amount: 1,
-    }).await.unwrap();
-}
+ASYNC FUNCTION HANDLE_INCREMENT(tx: Sender<Command>)
+    AWAIT tx.SEND(IncrementCounter { name ← "page_views", amount ← 1 })
 
-async fn handle_get_count(tx: mpsc::Sender<Command>) -> u64 {
-    let (reply_tx, reply_rx) = oneshot::channel();
-    tx.send(Command::GetCounter {
-        name: "page_views".into(),
-        reply: reply_tx,
-    }).await.unwrap();
-    reply_rx.await.unwrap()
-}
+ASYNC FUNCTION HANDLE_GET_COUNT(tx: Sender<Command>) → Integer
+    reply_tx, reply_rx ← NEW_ONESHOT_CHANNEL()
+    AWAIT tx.SEND(GetCounter { name ← "page_views", reply ← reply_tx })
+    RETURN AWAIT reply_rx.RECEIVE()
 ```
 
 **Why this works:** The `HashMap` is owned by a single task (the actor). No locks needed. The channel serializes access naturally. Request handlers never touch the data directly.
@@ -188,17 +161,15 @@ async fn handle_get_count(tx: mpsc::Sender<Command>) -> u64 {
 
 For one-to-many communication (e.g., config updates, shutdown signals):
 
-```rust
-use tokio::sync::broadcast;
-
-let (tx, _) = broadcast::channel::<ConfigUpdate>(16);
+```text
+tx ← NEW_BROADCAST_CHANNEL(capacity ← 16)
 
 // Each subscriber gets its own receiver
-let mut rx1 = tx.subscribe();
-let mut rx2 = tx.subscribe();
+rx1 ← tx.SUBSCRIBE()
+rx2 ← tx.SUBSCRIBE()
 
 // Publisher
-tx.send(ConfigUpdate::NewRateLimit(100)).unwrap();
+tx.SEND(ConfigUpdate.NewRateLimit(100))
 
 // Both rx1 and rx2 receive the update
 ```
@@ -207,51 +178,40 @@ tx.send(ConfigUpdate::NewRateLimit(100)).unwrap();
 
 The actor pattern formalizes message passing: each actor is a task that owns its state, receives messages through a channel, and communicates with other actors only via messages.
 
-```rust
-struct CacheActor {
-    data: HashMap<String, CachedItem>,
-    rx: mpsc::Receiver<CacheCommand>,
-}
+```text
+RECORD CacheActor
+    data: Map<String, CachedItem>
+    rx: Receiver<CacheCommand>
 
-enum CacheCommand {
-    Get { key: String, reply: oneshot::Sender<Option<CachedItem>> },
-    Set { key: String, value: CachedItem },
-    Invalidate { key: String },
-    Clear,
-}
+ENUM CacheCommand
+    Get { key: String, reply: Channel<Optional<CachedItem>> }
+    Set { key: String, value: CachedItem }
+    Invalidate { key: String }
+    Clear
 
-impl CacheActor {
-    fn new(rx: mpsc::Receiver<CacheCommand>) -> Self {
-        Self { data: HashMap::new(), rx }
-    }
+FUNCTION NEW_CACHE_ACTOR(rx: Receiver<CacheCommand>) → CacheActor
+    RETURN CacheActor { data ← EMPTY_MAP, rx ← rx }
 
-    async fn run(mut self) {
-        while let Some(cmd) = self.rx.recv().await {
-            match cmd {
-                CacheCommand::Get { key, reply } => {
-                    let item = self.data.get(&key)
-                        .filter(|item| !item.is_expired())
-                        .cloned();
-                    let _ = reply.send(item);
-                }
-                CacheCommand::Set { key, value } => {
-                    self.data.insert(key, value);
-                }
-                CacheCommand::Invalidate { key } => {
-                    self.data.remove(&key);
-                }
-                CacheCommand::Clear => {
-                    self.data.clear();
-                }
-            }
-        }
-    }
-}
+ASYNC FUNCTION RUN(actor: CacheActor)
+    WHILE cmd ← AWAIT actor.rx.RECEIVE()
+        MATCH cmd
+            CASE Get { key, reply }:
+                item ← actor.data.GET(key)
+                IF item IS NOT NONE AND NOT item.IS_EXPIRED() THEN
+                    SEND COPY(item) TO reply
+                ELSE
+                    SEND NONE TO reply
+            CASE Set { key, value }:
+                actor.data[key] ← value
+            CASE Invalidate { key }:
+                REMOVE key FROM actor.data
+            CASE Clear:
+                CLEAR actor.data
 
 // Spawn the actor
-let (tx, rx) = mpsc::channel(256);
-tokio::spawn(CacheActor::new(rx).run());
-// Pass `tx` to handlers that need cache access
+tx, rx ← NEW_CHANNEL(capacity ← 256)
+SPAWN ASYNC TASK RUN(NEW_CACHE_ACTOR(rx))
+// Pass tx to handlers that need cache access
 ```
 
 ## Choosing the Right Strategy

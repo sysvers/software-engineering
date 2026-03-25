@@ -89,32 +89,31 @@ src/
 
 Rust's module system is a natural fit for enforcing boundaries. Use `pub` and `pub(crate)` deliberately:
 
-```rust
+```text
 // orders/mod.rs -- the public API of the Orders module
 
 // Only these items are accessible to other modules
-pub use self::domain::Order;
-pub use self::domain::OrderId;
-pub use self::domain::OrderStatus;
-pub use self::application::OrderService;
-pub use self::application::PlaceOrderInput;
+PUBLIC EXPORT: domain.Order
+PUBLIC EXPORT: domain.OrderId
+PUBLIC EXPORT: domain.OrderStatus
+PUBLIC EXPORT: application.OrderService
+PUBLIC EXPORT: application.PlaceOrderInput
 
 // Everything else is private
-mod domain;
-mod application;
-mod infrastructure;
-mod api;
+PRIVATE MODULE domain
+PRIVATE MODULE application
+PRIVATE MODULE infrastructure
+PRIVATE MODULE api
 ```
 
-```rust
+```text
 // orders/domain/order_item.rs -- internal to the Orders module
 
-// pub(super) means visible within orders/domain/, not outside the module
-pub(super) struct OrderItem {
-    pub(super) product_id: ProductId,
-    pub(super) quantity: u32,
-    pub(super) unit_price: Money,
-}
+// Visible within orders/domain/, not outside the module
+STRUCTURE OrderItem (module-internal):
+    product_id ← ProductId
+    quantity ← integer
+    unit_price ← Money
 ```
 
 ### Using Cargo Workspaces for Stronger Boundaries
@@ -150,31 +149,23 @@ Now if the Orders crate tries to import anything from Inventory, the compiler re
 
 The simplest approach. Modules expose traits, and the composition root wires implementations together.
 
-```rust
-// inventory/mod.rs -- public trait
-pub trait InventoryChecker: Send + Sync {
-    fn check_availability(&self, product_id: &ProductId, quantity: u32) -> Result<bool, InventoryError>;
-}
+```text
+// inventory/mod.rs -- public interface
+INTERFACE InventoryChecker:
+    PROCEDURE CHECK_AVAILABILITY(product_id, quantity) → boolean or Error
 
-// orders/application/order_service.rs -- uses the trait
-pub struct OrderService<I: InventoryChecker, R: OrderRepository> {
-    inventory: I,
-    repo: R,
-}
+// orders/application/order_service.rs -- uses the interface
+STRUCTURE OrderService:
+    inventory ← InventoryChecker
+    repo ← OrderRepository
 
-impl<I: InventoryChecker, R: OrderRepository> OrderService<I, R> {
-    pub async fn place_order(&self, input: PlaceOrderInput) -> Result<Order, OrderError> {
-        // Check inventory through the trait (no knowledge of inventory internals)
-        for item in &input.items {
-            let available = self.inventory
-                .check_availability(&item.product_id, item.quantity)?;
-            if !available {
-                return Err(OrderError::OutOfStock(item.product_id.clone()));
-            }
-        }
-        // ... create and save order
-    }
-}
+PROCEDURE PLACE_ORDER(service, input):
+    // Check inventory through the interface (no knowledge of inventory internals)
+    FOR EACH item IN input.items:
+        available ← service.inventory.CHECK_AVAILABILITY(item.product_id, item.quantity)
+        IF NOT available THEN
+            RETURN Error(OutOfStock, item.product_id)
+    // ... create and save order
 ```
 
 **Trade-off**: Simple and type-safe, but creates coupling between the caller and the callee's availability. If inventory checking becomes slow, it blocks order placement.
@@ -183,45 +174,34 @@ impl<I: InventoryChecker, R: OrderRepository> OrderService<I, R> {
 
 Modules communicate through events within the same process. This provides looser coupling than direct calls.
 
-```rust
+```text
 // shared/events.rs
-pub enum DomainEvent {
-    OrderPlaced { order_id: OrderId, items: Vec<(ProductId, u32)> },
-    PaymentReceived { order_id: OrderId, amount: Money },
-    InventoryReserved { order_id: OrderId },
-}
+ENUMERATION DomainEvent:
+    OrderPlaced { order_id, items ← list of (ProductId, quantity) }
+    PaymentReceived { order_id, amount ← Money }
+    InventoryReserved { order_id }
 
 // A simple in-process event bus
-pub struct EventBus {
-    handlers: HashMap<String, Vec<Box<dyn EventHandler>>>,
-}
+STRUCTURE EventBus:
+    handlers ← map of event_type_name → list of EventHandler
 
-impl EventBus {
-    pub async fn publish(&self, event: DomainEvent) -> Result<(), EventError> {
-        let event_type = event.type_name();
-        if let Some(handlers) = self.handlers.get(event_type) {
-            for handler in handlers {
-                handler.handle(&event).await?;
-            }
-        }
-        Ok(())
-    }
-}
+PROCEDURE PUBLISH(bus, event):
+    event_type ← TYPE_NAME(event)
+    IF handlers EXIST for event_type THEN
+        FOR EACH handler IN bus.handlers[event_type]:
+            AWAIT handler.HANDLE(event)
+    RETURN Ok
 
 // inventory module subscribes to OrderPlaced
-struct ReserveStockHandler { /* ... */ }
+STRUCTURE ReserveStockHandler { ... }
 
-impl EventHandler for ReserveStockHandler {
-    async fn handle(&self, event: &DomainEvent) -> Result<(), EventError> {
-        if let DomainEvent::OrderPlaced { order_id, items } = event {
+IMPLEMENT EventHandler FOR ReserveStockHandler:
+    PROCEDURE HANDLE(event):
+        IF event IS OrderPlaced { order_id, items } THEN
             // Reserve stock for each item
-            for (product_id, quantity) in items {
-                self.inventory_service.reserve(product_id, *quantity).await?;
-            }
-        }
-        Ok(())
-    }
-}
+            FOR EACH (product_id, quantity) IN items:
+                AWAIT self.inventory_service.RESERVE(product_id, quantity)
+        RETURN Ok
 ```
 
 **Trade-off**: Looser coupling (order module does not know about inventory module), but harder to debug (event flow is implicit, not visible in function signatures).
@@ -247,13 +227,11 @@ Beyond Rust's module system, teams can add automated enforcement:
 
 **Architecture tests** (using custom test utilities):
 
-```rust
-#[test]
-fn orders_module_does_not_depend_on_payments_internals() {
+```text
+TEST orders_module_does_not_depend_on_payments_internals:
     // Parse the source files in orders/ and verify no imports from payments::infrastructure
-    let violations = find_imports("src/orders/", "crate::payments::infrastructure");
-    assert!(violations.is_empty(), "Orders module must not access payments internals: {:?}", violations);
-}
+    violations ← FIND_IMPORTS("src/orders/", "payments::infrastructure")
+    ASSERT violations IS empty, "Orders module must not access payments internals"
 ```
 
 **Dependency analysis in CI**: Run `cargo tree` or custom scripts to verify that module crates only depend on allowed peers.

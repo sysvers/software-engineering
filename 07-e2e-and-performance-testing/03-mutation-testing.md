@@ -4,22 +4,18 @@
 
 Code coverage tells you which lines your tests execute. It does **not** tell you whether your tests actually verify anything meaningful.
 
-```rust
-fn calculate_discount(price: f64, is_member: bool) -> f64 {
-    if is_member {
-        price * 0.9  // 10% discount
-    } else {
-        price
-    }
-}
+```text
+FUNCTION CALCULATE_DISCOUNT(price: float, is_member: boolean) -> float
+    IF is_member
+        RETURN price * 0.9  // 10% discount
+    ELSE
+        RETURN price
 
-#[test]
-fn test_discount() {
-    // This test executes both branches → 100% coverage
-    calculate_discount(100.0, true);
-    calculate_discount(100.0, false);
+TEST test_discount
+    // This test executes both branches -> 100% coverage
+    CALL CALCULATE_DISCOUNT(100.0, true)
+    CALL CALCULATE_DISCOUNT(100.0, false)
     // But it asserts NOTHING. It would pass even if the function returned 0.
-}
 ```
 
 100% code coverage. 0% bug detection. This is the gap mutation testing fills.
@@ -87,40 +83,30 @@ cargo mutants --file src/pricing.rs
 
 Consider this Rust module:
 
-```rust
-// src/pricing.rs
-pub fn apply_discount(price: f64, discount_percent: f64) -> f64 {
-    if discount_percent < 0.0 || discount_percent > 100.0 {
-        return price; // Invalid discount, return original price
-    }
-    price * (1.0 - discount_percent / 100.0)
-}
+```text
+// src/pricing
+FUNCTION APPLY_DISCOUNT(price: float, discount_percent: float) -> float
+    IF discount_percent < 0.0 OR discount_percent > 100.0
+        RETURN price  // Invalid discount, return original price
+    RETURN price * (1.0 - discount_percent / 100.0)
 
-pub fn calculate_total(items: &[(f64, u32)]) -> f64 {
-    items.iter().map(|(price, qty)| price * (*qty as f64)).sum()
-}
+FUNCTION CALCULATE_TOTAL(items: list of (price: float, qty: unsigned integer)) -> float
+    RETURN SUM OF (price * qty) FOR EACH (price, qty) IN items
 ```
 
 And these tests:
 
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
+```text
+TEST MODULE
 
-    #[test]
-    fn test_apply_discount() {
-        let result = apply_discount(100.0, 10.0);
-        assert_eq!(result, 90.0);
-    }
+    TEST test_apply_discount
+        result <- APPLY_DISCOUNT(100.0, 10.0)
+        ASSERT result = 90.0
 
-    #[test]
-    fn test_calculate_total() {
-        let items = vec![(10.0, 2), (5.0, 3)];
-        let total = calculate_total(&items);
-        assert_eq!(total, 35.0);
-    }
-}
+    TEST test_calculate_total
+        items <- [(10.0, 2), (5.0, 3)]
+        total <- CALCULATE_TOTAL(items)
+        ASSERT total = 35.0
 ```
 
 Running `cargo mutants` would generate mutations like:
@@ -141,47 +127,30 @@ Three mutants survived, revealing:
 
 ### Fixing the Tests
 
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
+```text
+TEST MODULE
 
-    #[test]
-    fn test_apply_discount_normal() {
-        assert_eq!(apply_discount(100.0, 10.0), 90.0);
-    }
+    TEST test_apply_discount_normal
+        ASSERT APPLY_DISCOUNT(100.0, 10.0) = 90.0
 
-    #[test]
-    fn test_apply_discount_zero_percent() {
-        assert_eq!(apply_discount(100.0, 0.0), 100.0); // Kills boundary mutant
-    }
+    TEST test_apply_discount_zero_percent
+        ASSERT APPLY_DISCOUNT(100.0, 0.0) = 100.0  // Kills boundary mutant
 
-    #[test]
-    fn test_apply_discount_full() {
-        assert_eq!(apply_discount(100.0, 100.0), 0.0); // Kills boundary mutant
-    }
+    TEST test_apply_discount_full
+        ASSERT APPLY_DISCOUNT(100.0, 100.0) = 0.0  // Kills boundary mutant
 
-    #[test]
-    fn test_apply_discount_negative_rejected() {
-        assert_eq!(apply_discount(100.0, -5.0), 100.0); // Kills validation mutant
-    }
+    TEST test_apply_discount_negative_rejected
+        ASSERT APPLY_DISCOUNT(100.0, -5.0) = 100.0  // Kills validation mutant
 
-    #[test]
-    fn test_apply_discount_over_100_rejected() {
-        assert_eq!(apply_discount(100.0, 150.0), 100.0); // Kills validation mutant
-    }
+    TEST test_apply_discount_over_100_rejected
+        ASSERT APPLY_DISCOUNT(100.0, 150.0) = 100.0  // Kills validation mutant
 
-    #[test]
-    fn test_calculate_total() {
-        let items = vec![(10.0, 2), (5.0, 3)];
-        assert_eq!(calculate_total(&items), 35.0);
-    }
+    TEST test_calculate_total
+        items <- [(10.0, 2), (5.0, 3)]
+        ASSERT CALCULATE_TOTAL(items) = 35.0
 
-    #[test]
-    fn test_calculate_total_empty() {
-        assert_eq!(calculate_total(&[]), 0.0);
-    }
-}
+    TEST test_calculate_total_empty
+        ASSERT CALCULATE_TOTAL([]) = 0.0
 ```
 
 Now `cargo mutants` kills all mutants — the tests actually verify the code's behavior.
@@ -192,35 +161,32 @@ Now `cargo mutants` kills all mutants — the tests actually verify the code's b
 
 ### Off-by-One in Pagination
 
-```rust
+```text
 // Original: items per page = 20
-pub fn paginate(items: &[Item], page: usize) -> &[Item] {
-    let start = page * 20;
-    let end = std::cmp::min(start + 20, items.len());
-    &items[start..end]
-}
+FUNCTION PAGINATE(items: list of Item, page: size) -> slice of items
+    start <- page * 20
+    end <- MIN(start + 20, items.length)
+    RETURN items[start..end]
 ```
 
 Mutation testing changed `page * 20` to `page * 20 + 1`. Tests still passed because no test checked the exact boundary between page 0 and page 1. The test was only checking "does page 0 return some items?" rather than "does page 0 return exactly the first 20 items?"
 
 ### Silent Failure in Error Handling
 
-```rust
-pub fn process_payment(order: &Order) -> Result<Receipt, PaymentError> {
-    let charge = gateway.charge(order.total)?;
-    audit_log::record_payment(&charge);  // Side effect
-    Ok(Receipt::from(charge))
-}
+```text
+FUNCTION PROCESS_PAYMENT(order: Order) -> Receipt or PaymentError
+    charge <- gateway.CHARGE(order.total)?
+    AUDIT_LOG.RECORD_PAYMENT(charge)  // Side effect
+    RETURN Ok(Receipt from charge)
 ```
 
 Mutation testing deleted the `audit_log::record_payment` line. Tests still passed — no test verified that the audit log was written. In production, this would mean payments processed without audit trails, a compliance violation.
 
 ### Wrong Comparison Operator
 
-```rust
-pub fn is_eligible_for_free_shipping(order_total: f64) -> bool {
-    order_total >= 50.0  // Free shipping on orders $50+
-}
+```text
+FUNCTION IS_ELIGIBLE_FOR_FREE_SHIPPING(order_total: float) -> boolean
+    RETURN order_total ≥ 50.0  // Free shipping on orders $50+
 ```
 
 Mutation testing changed `>=` to `>`. The test suite used `order_total = 100.0` — far from the boundary. It never tested the exact threshold of `$50.00`, so the mutant survived. A customer ordering exactly $50 worth of items would have been incorrectly charged for shipping.
@@ -244,12 +210,12 @@ Mutation testing is slow. Each mutant requires a full test suite run. For a proj
 
 Some mutations produce code that is functionally identical to the original. These are **equivalent mutants** — they survive not because tests are weak, but because the mutation doesn't change behavior.
 
-```rust
+```text
 // Original
-let items: Vec<_> = data.iter().collect();
+items <- COLLECT(data.ITERATE())
 
 // Mutant: replace collect with collect (same thing via different path)
-// This is equivalent — it's not a test gap
+// This is equivalent -- it's not a test gap
 ```
 
 Equivalent mutants inflate the "survived" count. Manually review survived mutants to distinguish real gaps from equivalents.

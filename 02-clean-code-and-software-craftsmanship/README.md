@@ -22,29 +22,23 @@ The average developer spends **10x more time reading code than writing it**. Cle
 Names are the most important tool for communicating intent. A good name tells you *what* something is and *why* it exists without needing a comment.
 
 **Bad naming:**
-```rust
-fn calc(d: Vec<i32>) -> i32 {
-    let mut r = 0;
-    for x in d {
-        if x > 0 {
-            r += x;
-        }
-    }
-    r
-}
+```text
+FUNCTION CALC(d: list of integers) → integer
+    r ← 0
+    FOR x IN d
+        IF x > 0
+            r ← r + x
+    RETURN r
 ```
 
 **Clean naming:**
-```rust
-fn sum_positive_transactions(transactions: Vec<i32>) -> i32 {
-    let mut total_revenue = 0;
-    for amount in transactions {
-        if amount > 0 {
-            total_revenue += amount;
-        }
-    }
-    total_revenue
-}
+```text
+FUNCTION SUM_POSITIVE_TRANSACTIONS(transactions: list of integers) → integer
+    total_revenue ← 0
+    FOR amount IN transactions
+        IF amount > 0
+            total_revenue ← total_revenue + amount
+    RETURN total_revenue
 ```
 
 **Naming rules of thumb:**
@@ -59,48 +53,38 @@ fn sum_positive_transactions(transactions: Vec<i32>) -> i32 {
 Cognitive complexity measures how hard code is to *mentally* process. Code with deep nesting, long functions, and hidden side effects has high cognitive complexity.
 
 **High cognitive complexity:**
-```rust
-fn process_order(order: &Order, user: &User) -> Result<(), Error> {
-    if user.is_active {
-        if order.items.len() > 0 {
-            if user.balance >= order.total() {
-                if !order.contains_restricted_items() || user.is_verified {
+```text
+FUNCTION PROCESS_ORDER(order, user) → Result or Error
+    IF user.is_active
+        IF order.items.length > 0
+            IF user.balance ≥ order.TOTAL()
+                IF NOT order.CONTAINS_RESTRICTED_ITEMS() OR user.is_verified
                     // actually process the order...
-                    Ok(())
-                } else {
-                    Err(Error::RestrictedItems)
-                }
-            } else {
-                Err(Error::InsufficientBalance)
-            }
-        } else {
-            Err(Error::EmptyOrder)
-        }
-    } else {
-        Err(Error::InactiveUser)
-    }
-}
+                    RETURN Ok
+                ELSE
+                    RETURN Error::RestrictedItems
+            ELSE
+                RETURN Error::InsufficientBalance
+        ELSE
+            RETURN Error::EmptyOrder
+    ELSE
+        RETURN Error::InactiveUser
 ```
 
 **Low cognitive complexity (early returns / guard clauses):**
-```rust
-fn process_order(order: &Order, user: &User) -> Result<(), Error> {
-    if !user.is_active {
-        return Err(Error::InactiveUser);
-    }
-    if order.items.is_empty() {
-        return Err(Error::EmptyOrder);
-    }
-    if user.balance < order.total() {
-        return Err(Error::InsufficientBalance);
-    }
-    if order.contains_restricted_items() && !user.is_verified {
-        return Err(Error::RestrictedItems);
-    }
+```text
+FUNCTION PROCESS_ORDER(order, user) → Result or Error
+    IF NOT user.is_active
+        RETURN Error::InactiveUser
+    IF order.items IS EMPTY
+        RETURN Error::EmptyOrder
+    IF user.balance < order.TOTAL()
+        RETURN Error::InsufficientBalance
+    IF order.CONTAINS_RESTRICTED_ITEMS() AND NOT user.is_verified
+        RETURN Error::RestrictedItems
 
     // actually process the order...
-    Ok(())
-}
+    RETURN Ok
 ```
 
 The second version reads top-to-bottom. Each guard clause handles one error condition. The happy path is clear at the bottom.
@@ -116,22 +100,20 @@ But beware: DRY is about *knowledge duplication*, not *code duplication*. Two fu
 **YAGNI (You Aren't Gonna Need It)** — Don't build features or abstractions for hypothetical future requirements. Build what you need now. If that future requirement actually arrives, you'll have more context to design it correctly.
 
 **Example of YAGNI violation:**
-```rust
+```text
 // Building a plugin system for a config parser that only reads JSON
 // "Just in case" we need YAML or TOML later
-trait ConfigParser: Send + Sync {
-    fn parse(&self, input: &str) -> Result<Config, ParseError>;
-    fn supported_extensions(&self) -> Vec<&str>;
-    fn validate_schema(&self, schema: &Schema) -> Result<(), SchemaError>;
-}
+INTERFACE ConfigParser
+    FUNCTION PARSE(input: string) → Config or ParseError
+    FUNCTION SUPPORTED_EXTENSIONS() → list of strings
+    FUNCTION VALIDATE_SCHEMA(schema) → Ok or SchemaError
 // ... 200 lines of plugin registry, loader, discovery...
 ```
 
 **What you actually needed:**
-```rust
-fn parse_config(input: &str) -> Result<Config, serde_json::Error> {
-    serde_json::from_str(input)
-}
+```text
+FUNCTION PARSE_CONFIG(input: string) → Config or JsonError
+    RETURN JSON_PARSE(input)
 ```
 
 ### Code Smells & Refactoring

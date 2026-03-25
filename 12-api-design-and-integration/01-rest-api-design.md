@@ -151,76 +151,49 @@ HATEOAS is the most debated REST constraint. In theory, it makes APIs self-disco
 
 ## Rust axum Example
 
-```rust
-use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
-    routing::{get, post},
-    Json, Router,
-};
-use serde::{Deserialize, Serialize};
+```text
+STRUCTURE ListParams:
+    after ← optional string
+    limit ← optional integer
+    status ← optional string
+    sort ← optional string
 
-#[derive(Deserialize)]
-struct ListParams {
-    after: Option<String>,
-    limit: Option<u32>,
-    status: Option<String>,
-    sort: Option<String>,
-}
+STRUCTURE PaginatedResponse:
+    data ← list of items
+    pagination ← Pagination
 
-#[derive(Serialize)]
-struct PaginatedResponse<T: Serialize> {
-    data: Vec<T>,
-    pagination: Pagination,
-}
+STRUCTURE Pagination:
+    next_cursor ← optional string
+    has_more ← boolean
 
-#[derive(Serialize)]
-struct Pagination {
-    next_cursor: Option<String>,
-    has_more: bool,
-}
+PROCEDURE LIST_ORDERS(db, params):
+    limit ← IF params.limit IS present THEN MIN(params.limit, 100) ELSE 20
+    orders ← AWAIT db.LIST_ORDERS(params.after, limit + 1, params.status)
 
-async fn list_orders(
-    State(db): State<AppState>,
-    Query(params): Query<ListParams>,
-) -> Json<PaginatedResponse<Order>> {
-    let limit = params.limit.unwrap_or(20).min(100);
-    let orders = db.list_orders(params.after, limit + 1, params.status).await;
+    has_more ← LENGTH(orders) > limit
+    data ← TAKE first limit items FROM orders
+    next_cursor ← IF has_more THEN id OF LAST item IN data ELSE None
 
-    let has_more = orders.len() > limit as usize;
-    let data: Vec<Order> = orders.into_iter().take(limit as usize).collect();
-    let next_cursor = if has_more { data.last().map(|o| o.id.clone()) } else { None };
+    RETURN JSON PaginatedResponse {
+        data ← data,
+        pagination ← Pagination { next_cursor, has_more }
+    }
 
-    Json(PaginatedResponse {
-        data,
-        pagination: Pagination { next_cursor, has_more },
-    })
-}
+PROCEDURE GET_ORDER(db, id):
+    result ← AWAIT db.GET_ORDER(id)
+    IF result IS present THEN
+        RETURN JSON(result)
+    ELSE
+        RETURN 404 NOT FOUND
 
-async fn get_order(
-    State(db): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Order>, StatusCode> {
-    db.get_order(&id)
-        .await
-        .map(Json)
-        .ok_or(StatusCode::NOT_FOUND)
-}
+PROCEDURE CREATE_ORDER(db, input):
+    order ← AWAIT db.CREATE_ORDER(input)
+    RETURN (201 CREATED, JSON(order))
 
-async fn create_order(
-    State(db): State<AppState>,
-    Json(input): Json<CreateOrderInput>,
-) -> (StatusCode, Json<Order>) {
-    let order = db.create_order(input).await;
-    (StatusCode::CREATED, Json(order))
-}
-
-fn app(state: AppState) -> Router {
-    Router::new()
-        .route("/orders", get(list_orders).post(create_order))
-        .route("/orders/{id}", get(get_order))
-        .with_state(state)
-}
+PROCEDURE APP(state):
+    REGISTER route "/orders" with GET → LIST_ORDERS, POST → CREATE_ORDER
+    REGISTER route "/orders/{id}" with GET → GET_ORDER
+    SET state
 ```
 
 ## Model APIs: Stripe and Google

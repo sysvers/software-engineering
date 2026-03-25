@@ -40,64 +40,51 @@ Key distinctions:
 
 In Rust, you might model a simple ETL pipeline stage as follows:
 
-```rust
-use std::collections::HashMap;
-
+```text
 /// Represents a single record flowing through the pipeline.
-#[derive(Debug, Clone)]
-struct Record {
-    fields: HashMap<String, String>,
-}
+STRUCTURE Record
+    fields : Map<String, String>
 
 /// The Extract phase: pull records from a source.
-trait Extractor {
-    fn extract(&self) -> Vec<Record>;
-}
+INTERFACE Extractor
+    PROCEDURE EXTRACT() → List<Record>
 
 /// The Transform phase: apply business logic to each record.
-trait Transformer {
-    fn transform(&self, record: Record) -> Option<Record>;
-}
+INTERFACE Transformer
+    PROCEDURE TRANSFORM(record) → Optional<Record>
 
 /// The Load phase: write records to a destination.
-trait Loader {
-    fn load(&self, records: &[Record]) -> Result<usize, String>;
-}
+INTERFACE Loader
+    PROCEDURE LOAD(records) → Result<Integer>
 
 /// A composable ETL pipeline that chains extract, transform, and load.
-struct EtlPipeline {
-    extractor: Box<dyn Extractor>,
-    transformers: Vec<Box<dyn Transformer>>,
-    loader: Box<dyn Loader>,
-}
+STRUCTURE EtlPipeline
+    extractor : Extractor
+    transformers : List<Transformer>
+    loader : Loader
 
-impl EtlPipeline {
-    fn run(&self) -> Result<usize, String> {
-        // Extract
-        let raw_records = self.extractor.extract();
-        println!("Extracted {} records", raw_records.len());
+PROCEDURE EtlPipeline.RUN() → Result<Integer>
+    // Extract
+    raw_records ← self.extractor.EXTRACT()
+    PRINT "Extracted " + LENGTH(raw_records) + " records"
 
-        // Transform -- apply each transformer in sequence, filtering out None results
-        let transformed: Vec<Record> = raw_records
-            .into_iter()
-            .filter_map(|record| {
-                let mut current = record;
-                for transformer in &self.transformers {
-                    match transformer.transform(current) {
-                        Some(r) => current = r,
-                        None => return None,
-                    }
-                }
-                Some(current)
-            })
-            .collect();
+    // Transform -- apply each transformer in sequence, filtering out NULL results
+    transformed ← EMPTY LIST
+    FOR EACH record IN raw_records DO
+        current ← record
+        skip ← FALSE
+        FOR EACH transformer IN self.transformers DO
+            result ← transformer.TRANSFORM(current)
+            IF result IS NULL THEN skip ← TRUE; BREAK
+            current ← result
+        END FOR
+        IF NOT skip THEN APPEND current TO transformed
+    END FOR
 
-        println!("Transformed down to {} records", transformed.len());
+    PRINT "Transformed down to " + LENGTH(transformed) + " records"
 
-        // Load
-        self.loader.load(&transformed)
-    }
-}
+    // Load
+    RETURN self.loader.LOAD(transformed)
 ```
 
 ### Batch vs Stream Processing
@@ -121,75 +108,54 @@ The fundamental trade-off is latency versus complexity:
 
 A simplified stream processor in Rust using channels:
 
-```rust
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
-
-#[derive(Debug, Clone)]
-struct Event {
-    timestamp: u64,
-    user_id: String,
-    action: String,
-    value: f64,
-}
+```text
+STRUCTURE Event
+    timestamp : Integer
+    user_id : String
+    action : String
+    value : Float
 
 /// A stream processor that reads events from a channel, applies a
 /// transformation, and writes results to an output channel.
-fn stream_processor(
-    input: mpsc::Receiver<Event>,
-    output: mpsc::Sender<Event>,
-    filter_action: String,
-) {
-    for event in input {
+PROCEDURE STREAM_PROCESSOR(input_channel, output_channel, filter_action)
+    FOR EACH event IN input_channel DO
         // Filter: only pass through events matching the target action
-        if event.action == filter_action {
-            let transformed = Event {
-                value: event.value * 1.1, // apply a 10% adjustment
-                ..event
-            };
-            if output.send(transformed).is_err() {
-                eprintln!("Output channel closed, stopping processor");
-                break;
+        IF event.action = filter_action THEN
+            transformed ← Event {
+                value ← event.value * 1.1,   // apply a 10% adjustment
+                timestamp ← event.timestamp,
+                user_id ← event.user_id,
+                action ← event.action
             }
-        }
-    }
-}
+            IF SEND(output_channel, transformed) FAILS THEN
+                PRINT "Output channel closed, stopping processor"
+                BREAK
+            END IF
+        END IF
+    END FOR
 
 /// A windowed aggregator that collects events over a time window.
-struct WindowedAggregator {
-    window_duration_ms: u64,
-    buffer: Vec<Event>,
-    window_start: u64,
-}
+STRUCTURE WindowedAggregator
+    window_duration_ms : Integer
+    buffer : List<Event>
+    window_start : Integer ← 0
 
-impl WindowedAggregator {
-    fn new(window_duration_ms: u64) -> Self {
-        Self {
-            window_duration_ms,
-            buffer: Vec::new(),
-            window_start: 0,
-        }
-    }
+PROCEDURE WindowedAggregator.PROCESS(event) → Optional<Float>
+    IF self.buffer IS EMPTY THEN
+        self.window_start ← event.timestamp
+    END IF
 
-    fn process(&mut self, event: Event) -> Option<f64> {
-        if self.buffer.is_empty() {
-            self.window_start = event.timestamp;
-        }
-
-        // If the event falls outside the current window, flush the window
-        if event.timestamp >= self.window_start + self.window_duration_ms {
-            let sum: f64 = self.buffer.iter().map(|e| e.value).sum();
-            self.buffer.clear();
-            self.window_start = event.timestamp;
-            self.buffer.push(event);
-            Some(sum)
-        } else {
-            self.buffer.push(event);
-            None
-        }
-    }
-}
+    // If the event falls outside the current window, flush the window
+    IF event.timestamp ≥ self.window_start + self.window_duration_ms THEN
+        sum ← SUM(e.value FOR EACH e IN self.buffer)
+        CLEAR(self.buffer)
+        self.window_start ← event.timestamp
+        APPEND event TO self.buffer
+        RETURN sum
+    ELSE
+        APPEND event TO self.buffer
+        RETURN NULL
+    END IF
 ```
 
 ### Data Warehousing: Star Schema and Snowflake Schema
@@ -210,48 +176,43 @@ avoids update anomalies but increases query complexity due to additional joins.
 
 Modeling these schemas in Rust:
 
-```rust
+```text
 /// Fact table: each row represents a measurable business event.
-struct FactSale {
-    sale_id: u64,
-    date_key: u32,        // FK to dim_date
-    product_key: u32,     // FK to dim_product
-    customer_key: u32,    // FK to dim_customer
-    store_key: u32,       // FK to dim_store
-    quantity: i32,
-    unit_price: f64,
-    total_amount: f64,
-    discount_amount: f64,
-}
+STRUCTURE FactSale
+    sale_id : Integer
+    date_key : Integer        // FK to dim_date
+    product_key : Integer     // FK to dim_product
+    customer_key : Integer    // FK to dim_customer
+    store_key : Integer       // FK to dim_store
+    quantity : Integer
+    unit_price : Float
+    total_amount : Float
+    discount_amount : Float
 
 /// Star schema dimension: fully denormalized.
-struct DimProduct {
-    product_key: u32,
-    product_name: String,
-    category_name: String,     // denormalized -- lives directly here
-    subcategory_name: String,  // denormalized
-    brand: String,
-    supplier_name: String,     // denormalized
-}
+STRUCTURE DimProduct
+    product_key : Integer
+    product_name : String
+    category_name : String     // denormalized -- lives directly here
+    subcategory_name : String  // denormalized
+    brand : String
+    supplier_name : String     // denormalized
 
 /// Snowflake schema: dimension is normalized into sub-dimensions.
-struct DimProductSnowflake {
-    product_key: u32,
-    product_name: String,
-    category_key: u32,     // FK to DimCategory
-    brand_key: u32,        // FK to DimBrand
-}
+STRUCTURE DimProductSnowflake
+    product_key : Integer
+    product_name : String
+    category_key : Integer     // FK to DimCategory
+    brand_key : Integer        // FK to DimBrand
 
-struct DimCategory {
-    category_key: u32,
-    category_name: String,
-    department_key: u32,   // FK to DimDepartment -- further normalization
-}
+STRUCTURE DimCategory
+    category_key : Integer
+    category_name : String
+    department_key : Integer   // FK to DimDepartment -- further normalization
 
-struct DimDepartment {
-    department_key: u32,
-    department_name: String,
-}
+STRUCTURE DimDepartment
+    department_key : Integer
+    department_name : String
 ```
 
 ### Data Quality and Governance
@@ -273,103 +234,61 @@ Key dimensions of data quality:
 
 A data quality validation framework in Rust:
 
-```rust
-use std::collections::HashSet;
+```text
+ENUMERATION ValidationResult
+    Pass
+    Fail(reason : String)
 
-#[derive(Debug)]
-enum ValidationResult {
-    Pass,
-    Fail(String),
-}
-
-trait QualityCheck {
-    fn name(&self) -> &str;
-    fn validate(&self, records: &[Record]) -> ValidationResult;
-}
+INTERFACE QualityCheck
+    PROCEDURE NAME() → String
+    PROCEDURE VALIDATE(records) → ValidationResult
 
 /// Check that no records have a null or empty value for a required field.
-struct CompletenessCheck {
-    field_name: String,
-}
+STRUCTURE CompletenessCheck IMPLEMENTS QualityCheck
+    field_name : String
 
-impl QualityCheck for CompletenessCheck {
-    fn name(&self) -> &str {
-        "CompletenessCheck"
-    }
-
-    fn validate(&self, records: &[Record]) -> ValidationResult {
-        let missing_count = records
-            .iter()
-            .filter(|r| {
-                r.fields
-                    .get(&self.field_name)
-                    .map_or(true, |v| v.is_empty())
-            })
-            .count();
-
-        if missing_count == 0 {
-            ValidationResult::Pass
-        } else {
-            ValidationResult::Fail(format!(
-                "{} records missing required field '{}'",
-                missing_count, self.field_name
-            ))
-        }
-    }
-}
+    PROCEDURE VALIDATE(records) → ValidationResult
+        missing_count ← COUNT records WHERE
+            record.fields[self.field_name] IS NULL OR EMPTY
+        IF missing_count = 0 THEN
+            RETURN Pass
+        ELSE
+            RETURN Fail(missing_count + " records missing required field '" + self.field_name + "'")
+        END IF
 
 /// Check that a field's values are unique across all records.
-struct UniquenessCheck {
-    field_name: String,
-}
+STRUCTURE UniquenessCheck IMPLEMENTS QualityCheck
+    field_name : String
 
-impl QualityCheck for UniquenessCheck {
-    fn name(&self) -> &str {
-        "UniquenessCheck"
-    }
-
-    fn validate(&self, records: &[Record]) -> ValidationResult {
-        let mut seen = HashSet::new();
-        let mut duplicate_count = 0;
-
-        for record in records {
-            if let Some(value) = record.fields.get(&self.field_name) {
-                if !seen.insert(value.clone()) {
-                    duplicate_count += 1;
-                }
-            }
-        }
-
-        if duplicate_count == 0 {
-            ValidationResult::Pass
-        } else {
-            ValidationResult::Fail(format!(
-                "{} duplicate values found for field '{}'",
-                duplicate_count, self.field_name
-            ))
-        }
-    }
-}
+    PROCEDURE VALIDATE(records) → ValidationResult
+        seen ← EMPTY SET
+        duplicate_count ← 0
+        FOR EACH record IN records DO
+            value ← record.fields[self.field_name]
+            IF value IS NOT NULL THEN
+                IF value IN seen THEN duplicate_count ← duplicate_count + 1
+                ADD value TO seen
+            END IF
+        END FOR
+        IF duplicate_count = 0 THEN
+            RETURN Pass
+        ELSE
+            RETURN Fail(duplicate_count + " duplicate values found for field '" + self.field_name + "'")
+        END IF
 
 /// Run a suite of quality checks and report results.
-fn run_quality_checks(records: &[Record], checks: &[Box<dyn QualityCheck>]) -> bool {
-    let mut all_passed = true;
-
-    for check in checks {
-        let result = check.validate(records);
-        match &result {
-            ValidationResult::Pass => {
-                println!("[PASS] {}", check.name());
-            }
-            ValidationResult::Fail(reason) => {
-                eprintln!("[FAIL] {}: {}", check.name(), reason);
-                all_passed = false;
-            }
-        }
-    }
-
-    all_passed
-}
+PROCEDURE RUN_QUALITY_CHECKS(records, checks) → Boolean
+    all_passed ← TRUE
+    FOR EACH check IN checks DO
+        result ← check.VALIDATE(records)
+        IF result IS Pass THEN
+            PRINT "[PASS] " + check.NAME()
+        ELSE
+            PRINT "[FAIL] " + check.NAME() + ": " + result.reason
+            all_passed ← FALSE
+        END IF
+    END FOR
+    RETURN all_passed
 ```
 
 ### Building Data Pipelines in Rust
@@ -390,96 +309,55 @@ Common Rust crates for data engineering include:
 
 A pipeline stage using the builder pattern:
 
-```rust
-/// Configuration for a pipeline stage.
-struct PipelineStageConfig {
-    name: String,
-    parallelism: usize,
-    batch_size: usize,
-    retry_attempts: u32,
-    retry_delay_ms: u64,
-}
+```text
+/// Configuration for a pipeline stage (builder pattern).
+STRUCTURE PipelineStageConfig
+    name : String
+    parallelism : Integer ← 1
+    batch_size : Integer ← 1000
+    retry_attempts : Integer ← 3
+    retry_delay_ms : Integer ← 1000
 
-impl PipelineStageConfig {
-    fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            parallelism: 1,
-            batch_size: 1000,
-            retry_attempts: 3,
-            retry_delay_ms: 1000,
-        }
-    }
+PROCEDURE PipelineStageConfig.WITH_PARALLELISM(p) → self
+    self.parallelism ← p; RETURN self
 
-    fn with_parallelism(mut self, p: usize) -> Self {
-        self.parallelism = p;
-        self
-    }
+PROCEDURE PipelineStageConfig.WITH_BATCH_SIZE(size) → self
+    self.batch_size ← size; RETURN self
 
-    fn with_batch_size(mut self, size: usize) -> Self {
-        self.batch_size = size;
-        self
-    }
-
-    fn with_retries(mut self, attempts: u32, delay_ms: u64) -> Self {
-        self.retry_attempts = attempts;
-        self.retry_delay_ms = delay_ms;
-        self
-    }
-}
+PROCEDURE PipelineStageConfig.WITH_RETRIES(attempts, delay_ms) → self
+    self.retry_attempts ← attempts
+    self.retry_delay_ms ← delay_ms
+    RETURN self
 
 /// A pipeline composed of multiple configured stages.
-struct Pipeline {
-    stages: Vec<PipelineStageConfig>,
-}
+STRUCTURE Pipeline
+    stages : List<PipelineStageConfig>
 
-impl Pipeline {
-    fn new() -> Self {
-        Self { stages: Vec::new() }
-    }
+PROCEDURE Pipeline.ADD_STAGE(stage) → self
+    APPEND stage TO self.stages; RETURN self
 
-    fn add_stage(mut self, stage: PipelineStageConfig) -> Self {
-        self.stages.push(stage);
-        self
-    }
+PROCEDURE Pipeline.DESCRIBE()
+    PRINT "Pipeline with " + LENGTH(self.stages) + " stages:"
+    FOR i ← 0 TO LENGTH(self.stages) - 1 DO
+        stage ← self.stages[i]
+        PRINT "  Stage " + i + ": '" + stage.name
+              + "' (parallelism=" + stage.parallelism
+              + ", batch_size=" + stage.batch_size
+              + ", retries=" + stage.retry_attempts + ")"
+    END FOR
 
-    fn describe(&self) {
-        println!("Pipeline with {} stages:", self.stages.len());
-        for (i, stage) in self.stages.iter().enumerate() {
-            println!(
-                "  Stage {}: '{}' (parallelism={}, batch_size={}, retries={})",
-                i, stage.name, stage.parallelism, stage.batch_size, stage.retry_attempts
-            );
-        }
-    }
-}
+PROCEDURE MAIN()
+    pipeline ← NEW Pipeline()
+        .ADD_STAGE(PipelineStageConfig("ingest-clickstream")
+            .WITH_PARALLELISM(4).WITH_BATCH_SIZE(5000))
+        .ADD_STAGE(PipelineStageConfig("deduplicate")
+            .WITH_PARALLELISM(2).WITH_BATCH_SIZE(10000))
+        .ADD_STAGE(PipelineStageConfig("enrich-user-data")
+            .WITH_PARALLELISM(8).WITH_RETRIES(5, 2000))
+        .ADD_STAGE(PipelineStageConfig("write-to-warehouse")
+            .WITH_PARALLELISM(2).WITH_BATCH_SIZE(50000).WITH_RETRIES(3, 5000))
 
-fn main() {
-    let pipeline = Pipeline::new()
-        .add_stage(
-            PipelineStageConfig::new("ingest-clickstream")
-                .with_parallelism(4)
-                .with_batch_size(5000),
-        )
-        .add_stage(
-            PipelineStageConfig::new("deduplicate")
-                .with_parallelism(2)
-                .with_batch_size(10000),
-        )
-        .add_stage(
-            PipelineStageConfig::new("enrich-user-data")
-                .with_parallelism(8)
-                .with_retries(5, 2000),
-        )
-        .add_stage(
-            PipelineStageConfig::new("write-to-warehouse")
-                .with_parallelism(2)
-                .with_batch_size(50000)
-                .with_retries(3, 5000),
-        );
-
-    pipeline.describe();
-}
+    pipeline.DESCRIBE()
 ```
 
 ---

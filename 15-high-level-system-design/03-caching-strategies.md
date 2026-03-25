@@ -43,27 +43,22 @@ The application manages the cache explicitly. On a read, check the cache first. 
 - First request for any data is always slow (cache miss)
 - Stale data risk — if the database is updated, the cache still holds the old value until TTL expires or explicit invalidation
 
-```rust
-use std::time::Duration;
-
-async fn get_user(cache: &RedisCache, db: &PgPool, user_id: i64) -> Result<User, Error> {
-    let cache_key = format!("user:{}", user_id);
+```text
+PROCEDURE GET_USER(cache, db, user_id):
+    cache_key ← "user:" + user_id
 
     // Step 1: Check cache
-    if let Some(user) = cache.get::<User>(&cache_key).await? {
-        return Ok(user); // Cache hit
-    }
+    user ← AWAIT cache.GET(cache_key)
+    IF user IS present THEN
+        RETURN user  // Cache hit
 
-    // Step 2: Cache miss — fetch from database
-    let user = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", user_id)
-        .fetch_one(db)
-        .await?;
+    // Step 2: Cache miss -- fetch from database
+    user ← AWAIT QUERY db: "SELECT * FROM users WHERE id = user_id"
 
     // Step 3: Populate cache with TTL
-    cache.set(&cache_key, &user, Duration::from_secs(300)).await?;
+    AWAIT cache.SET(cache_key, user, TTL ← 300 seconds)
 
-    Ok(user)
-}
+    RETURN user
 ```
 
 ### Write-Through
@@ -190,17 +185,11 @@ Netflix does not rely on third-party CDNs for video delivery. They built Open Co
 
 A thread-safe in-memory cache with per-entry TTL, suitable for application-level caching when you want to avoid an external dependency like Redis.
 
-```rust
-use std::collections::HashMap;
-use std::hash::Hash;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
-
+```text
 /// A cache entry holding a value and its expiration timestamp.
-struct CacheEntry<V> {
-    value: V,
-    expires_at: Instant,
-}
+STRUCTURE CacheEntry:
+    value ← V
+    expires_at ← timestamp
 
 /// Thread-safe in-memory cache with per-entry TTL.
 ///
@@ -211,105 +200,82 @@ struct CacheEntry<V> {
 ///   background thread. This avoids the complexity of a timer thread.
 /// - Clone bound on V: entries are cloned on read to avoid holding the
 ///   lock across the caller's processing.
-pub struct TtlCache<K: Eq + Hash, V: Clone> {
-    entries: Arc<RwLock<HashMap<K, CacheEntry<V>>>>,
-    default_ttl: Duration,
-}
+STRUCTURE TtlCache:
+    entries ← shared read-write-locked map of Key → CacheEntry
+    default_ttl ← duration
 
-impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
-    /// Create a new cache with a default TTL for entries.
-    pub fn new(default_ttl: Duration) -> Self {
-        Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
-            default_ttl,
-        }
+/// Create a new cache with a default TTL for entries.
+PROCEDURE NEW_TTL_CACHE(default_ttl):
+    RETURN TtlCache {
+        entries ← NEW shared map,
+        default_ttl ← default_ttl
     }
 
-    /// Insert a value with the default TTL.
-    pub fn set(&self, key: K, value: V) {
-        self.set_with_ttl(key, value, self.default_ttl);
-    }
+/// Insert a value with the default TTL.
+PROCEDURE SET(cache, key, value):
+    SET_WITH_TTL(cache, key, value, cache.default_ttl)
 
-    /// Insert a value with a custom TTL.
-    pub fn set_with_ttl(&self, key: K, value: V, ttl: Duration) {
-        let mut map = self.entries.write().unwrap();
-        map.insert(key, CacheEntry {
-            value,
-            expires_at: Instant::now() + ttl,
-        });
-    }
+/// Insert a value with a custom TTL.
+PROCEDURE SET_WITH_TTL(cache, key, value, ttl):
+    ACQUIRE write lock ON cache.entries
+    INSERT (key → CacheEntry { value, expires_at ← NOW() + ttl })
 
-    /// Get a value if it exists and has not expired.
-    /// Returns None for both missing and expired entries.
-    pub fn get(&self, key: &K) -> Option<V> {
-        // Try a read lock first (concurrent reads)
-        {
-            let map = self.entries.read().unwrap();
-            if let Some(entry) = map.get(key) {
-                if Instant::now() < entry.expires_at {
-                    return Some(entry.value.clone());
-                }
-            } else {
-                return None; // Key does not exist
-            }
-        }
-        // Entry exists but is expired — acquire write lock to remove it
-        let mut map = self.entries.write().unwrap();
-        map.remove(key);
-        None
-    }
+/// Get a value if it exists and has not expired.
+/// Returns None for both missing and expired entries.
+PROCEDURE GET(cache, key):
+    // Try a read lock first (concurrent reads)
+    ACQUIRE read lock ON cache.entries
+    IF key EXISTS in map THEN
+        entry ← map[key]
+        IF NOW() < entry.expires_at THEN
+            RETURN CLONE(entry.value)
+        // Entry is expired -- fall through
+    ELSE
+        RETURN None  // Key does not exist
 
-    /// Delete a specific key (explicit invalidation).
-    pub fn invalidate(&self, key: &K) {
-        let mut map = self.entries.write().unwrap();
-        map.remove(key);
-    }
+    // Entry exists but is expired -- acquire write lock to remove it
+    ACQUIRE write lock ON cache.entries
+    REMOVE key FROM map
+    RETURN None
 
-    /// Remove all expired entries. Call periodically to reclaim memory.
-    /// In production, run this on a timer (e.g., every 60 seconds).
-    pub fn evict_expired(&self) {
-        let mut map = self.entries.write().unwrap();
-        let now = Instant::now();
-        map.retain(|_, entry| now < entry.expires_at);
-    }
+/// Delete a specific key (explicit invalidation).
+PROCEDURE INVALIDATE(cache, key):
+    ACQUIRE write lock ON cache.entries
+    REMOVE key FROM map
 
-    /// Return the number of entries (including expired ones not yet evicted).
-    pub fn len(&self) -> usize {
-        self.entries.read().unwrap().len()
-    }
+/// Remove all expired entries. Call periodically to reclaim memory.
+/// In production, run this on a timer (e.g., every 60 seconds).
+PROCEDURE EVICT_EXPIRED(cache):
+    ACQUIRE write lock ON cache.entries
+    now ← NOW()
+    RETAIN only entries WHERE now < entry.expires_at
 
-    /// Check if the cache is empty.
-    pub fn is_empty(&self) -> bool {
-        self.entries.read().unwrap().is_empty()
-    }
-}
+/// Return the number of entries (including expired ones not yet evicted).
+PROCEDURE LEN(cache):
+    ACQUIRE read lock ON cache.entries
+    RETURN SIZE OF map
 
-impl<K: Eq + Hash + Clone, V: Clone> Clone for TtlCache<K, V> {
-    fn clone(&self) -> Self {
-        Self {
-            entries: self.entries.clone(),
-            default_ttl: self.default_ttl,
-        }
-    }
-}
+/// Check if the cache is empty.
+PROCEDURE IS_EMPTY(cache):
+    ACQUIRE read lock ON cache.entries
+    RETURN map IS empty
 
 // Usage example: cache-aside pattern with the TtlCache
-fn get_product(cache: &TtlCache<String, Product>, db: &Database, product_id: &str) -> Product {
-    let key = format!("product:{}", product_id);
+PROCEDURE GET_PRODUCT(cache, db, product_id):
+    key ← "product:" + product_id
 
     // 1. Check cache
-    if let Some(cached) = cache.get(&key) {
-        return cached;
-    }
+    cached ← GET(cache, key)
+    IF cached IS present THEN
+        RETURN cached
 
-    // 2. Cache miss — fetch from database
-    let product = db.fetch_product(product_id);
+    // 2. Cache miss -- fetch from database
+    product ← db.FETCH_PRODUCT(product_id)
 
     // 3. Populate cache
-    cache.set(key, product.clone());
+    SET(cache, key, CLONE(product))
 
-    product
-}
+    RETURN product
 ```
 
 **Production considerations for this cache:**

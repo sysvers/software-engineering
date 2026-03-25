@@ -92,63 +92,50 @@ TLS encrypts data in transit between clients and servers. Every production servi
 
 Example of a Rust server configured with TLS using `axum` and `rustls`:
 
-```rust
-use axum::{routing::get, Router};
-use axum_server::tls_rustls::RustlsConfig;
-use std::net::SocketAddr;
-
-#[tokio::main]
-async fn main() {
-    let tls_config = RustlsConfig::from_pem_file(
-        "/etc/certs/server.crt",
-        "/etc/certs/server.key",
+```text
+PROCEDURE MAIN()
+    tls_config ← LOAD_TLS_CONFIG_FROM_PEM(
+        cert_file ← "/etc/certs/server.crt",
+        key_file ← "/etc/certs/server.key"
     )
-    .await
-    .expect("Failed to load TLS certificates");
 
-    let app = Router::new().route("/health", get(|| async { "ok" }));
+    app ← NEW Router
+        .ROUTE("/health", GET → RETURN "ok")
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 443));
-    axum_server::bind_rustls(addr, tls_config)
-        .serve(app.into_make_service())
-        .await
-        .expect("Server failed to start");
-}
+    addr ← "0.0.0.0:443"
+    BIND_TLS_SERVER(addr, tls_config)
+        .SERVE(app)
 ```
 
 On the client side, configuring a TLS client that enforces certificate verification is equally important. Here is an example using `rustls` with `reqwest` to make HTTPS requests with strict certificate validation:
 
-```rust
-use reqwest::Client;
-use rustls::{ClientConfig, RootCertStore};
-use std::sync::Arc;
-
-fn build_secure_client() -> Result<Client, Box<dyn std::error::Error>> {
+```text
+PROCEDURE BUILD_SECURE_CLIENT() → Result<HTTPClient>
     // Load the system's trusted root certificates
-    let mut root_store = RootCertStore::empty();
-    for cert in rustls_native_certs::load_native_certs()? {
-        root_store.add(cert)?;
-    }
+    root_store ← NEW RootCertStore
+    FOR EACH cert IN LOAD_NATIVE_CERTIFICATES() DO
+        root_store.ADD(cert)
+    END FOR
 
-    let tls_config = ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
+    tls_config ← BUILD_TLS_CLIENT_CONFIG(
+        root_certificates ← root_store,
+        client_auth ← NONE
+    )
 
-    let client = Client::builder()
-        .use_preconfigured_tls(tls_config)
+    client ← BUILD_HTTP_CLIENT(
+        tls ← tls_config,
         // Enforce HTTPS -- refuse to follow HTTP redirects
-        .https_only(true)
+        https_only ← TRUE,
         // Set a reasonable timeout so connections do not hang indefinitely
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
+        timeout ← 30 seconds
+    )
 
-    Ok(client)
-}
+    RETURN Ok(client)
 
-async fn fetch_data(client: &Client, url: &str) -> Result<String, reqwest::Error> {
-    let response = client.get(url).send().await?.error_for_status()?;
-    response.text().await
-}
+PROCEDURE FETCH_DATA(client, url) → Result<String>
+    response ← client.GET(url).SEND()
+    CHECK_STATUS(response)
+    RETURN response.TEXT()
 ```
 
 The key detail is `https_only(true)` -- this ensures the client will never accidentally downgrade to plaintext HTTP, even if a server issues a redirect. Combined with the system root certificate store, this gives you a client that validates server identity and encrypts all traffic.
@@ -176,107 +163,84 @@ Secrets -- API keys, database passwords, TLS private keys, signing tokens -- mus
 
 Even when using environment variables (levels 1-2 in the maturity table above), you should validate that all required secrets are present and well-formed at startup rather than discovering a missing secret at runtime when a request fails. Here is a pattern for loading and validating secrets from environment variables:
 
-```rust
-use std::env;
+```text
+STRUCTURE AppSecrets
+    database_url : String
+    jwt_signing_key : String
+    api_key : String
 
-#[derive(Debug, Clone)]
-pub struct AppSecrets {
-    pub database_url: String,
-    pub jwt_signing_key: String,
-    pub api_key: String,
-}
+/// Load all required secrets from environment variables at startup.
+/// Fails with a clear message if any secret is missing or invalid.
+/// Call this once during initialization -- fail fast, not at request time.
+PROCEDURE AppSecrets.FROM_ENV() → AppSecrets
+    errors ← EMPTY LIST
 
-impl AppSecrets {
-    /// Load all required secrets from environment variables at startup.
-    /// Panics with a clear message if any secret is missing or invalid.
-    /// Call this once during initialization -- fail fast, not at request time.
-    pub fn from_env() -> Self {
-        let mut errors: Vec<String> = Vec::new();
+    database_url ← REQUIRE_ENV("DATABASE_URL", errors)
+    jwt_signing_key ← REQUIRE_ENV("JWT_SIGNING_KEY", errors)
+    api_key ← REQUIRE_ENV("API_KEY", errors)
 
-        let database_url = require_env("DATABASE_URL", &mut errors);
-        let jwt_signing_key = require_env("JWT_SIGNING_KEY", &mut errors);
-        let api_key = require_env("API_KEY", &mut errors);
+    // Validate format constraints, not just presence
+    IF database_url IS NOT NULL THEN
+        IF NOT STARTS_WITH(database_url, "postgres://")
+           AND NOT STARTS_WITH(database_url, "postgresql://") THEN
+            APPEND "DATABASE_URL must start with postgres:// or postgresql://" TO errors
+        END IF
+    END IF
 
-        // Validate format constraints, not just presence
-        if let Some(ref url) = database_url {
-            if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
-                errors.push(
-                    "DATABASE_URL must start with postgres:// or postgresql://".to_string(),
-                );
-            }
-        }
+    IF jwt_signing_key IS NOT NULL THEN
+        IF LENGTH(jwt_signing_key) < 32 THEN
+            APPEND "JWT_SIGNING_KEY must be at least 32 characters" TO errors
+        END IF
+    END IF
 
-        if let Some(ref key) = jwt_signing_key {
-            if key.len() < 32 {
-                errors.push(
-                    "JWT_SIGNING_KEY must be at least 32 characters".to_string(),
-                );
-            }
-        }
+    IF errors IS NOT EMPTY THEN
+        // Log every problem at once so operators can fix them all in one pass
+        PRINT "FATAL: missing or invalid configuration:"
+        FOR EACH err IN errors DO
+            PRINT "  - " + err
+        END FOR
+        EXIT(1)
+    END IF
 
-        if !errors.is_empty() {
-            // Log every problem at once so operators can fix them all in one pass
-            eprintln!("FATAL: missing or invalid configuration:");
-            for err in &errors {
-                eprintln!("  - {err}");
-            }
-            std::process::exit(1);
-        }
-
-        AppSecrets {
-            database_url: database_url.unwrap(),
-            jwt_signing_key: jwt_signing_key.unwrap(),
-            api_key: api_key.unwrap(),
-        }
+    RETURN AppSecrets {
+        database_url ← database_url,
+        jwt_signing_key ← jwt_signing_key,
+        api_key ← api_key
     }
-}
 
-fn require_env(name: &str, errors: &mut Vec<String>) -> Option<String> {
-    match env::var(name) {
-        Ok(val) if val.is_empty() => {
-            errors.push(format!("{name} is set but empty"));
-            None
-        }
-        Ok(val) => Some(val),
-        Err(_) => {
-            errors.push(format!("{name} is not set"));
-            None
-        }
-    }
-}
+PROCEDURE REQUIRE_ENV(name, errors) → Option<String>
+    value ← GET_ENV_VAR(name)
+    IF value IS NOT SET THEN
+        APPEND name + " is not set" TO errors
+        RETURN NULL
+    ELSE IF value IS EMPTY THEN
+        APPEND name + " is set but empty" TO errors
+        RETURN NULL
+    ELSE
+        RETURN value
+    END IF
 ```
 
 This approach collects all configuration errors and reports them together, so an operator does not have to fix and redeploy one variable at a time. In production, replace this pattern with a proper secrets manager (level 3+).
 
 Example of fetching a secret from AWS Secrets Manager in Rust:
 
-```rust
-use aws_sdk_secretsmanager::Client;
+```text
+PROCEDURE GET_DATABASE_URL(client) → Result<String>
+    response ← client.GET_SECRET_VALUE(
+        secret_id ← "production/database/credentials"
+    )
 
-async fn get_database_url(client: &Client) -> Result<String, Box<dyn std::error::Error>> {
-    let response = client
-        .get_secret_value()
-        .secret_id("production/database/credentials")
-        .send()
-        .await?;
-
-    let secret_string = response
-        .secret_string()
-        .ok_or("Secret value was not a string")?;
+    secret_string ← response.SECRET_STRING()
+    IF secret_string IS NULL THEN RETURN Error("Secret value was not a string")
 
     // Parse JSON secret containing username, password, host, port, dbname
-    let creds: serde_json::Value = serde_json::from_str(secret_string)?;
-    let url = format!(
-        "postgres://{}:{}@{}:{}/{}",
-        creds["username"].as_str().unwrap(),
-        creds["password"].as_str().unwrap(),
-        creds["host"].as_str().unwrap(),
-        creds["port"].as_u64().unwrap(),
-        creds["dbname"].as_str().unwrap(),
-    );
+    creds ← PARSE_JSON(secret_string)
+    url ← "postgres://" + creds["username"] + ":" + creds["password"]
+           + "@" + creds["host"] + ":" + creds["port"]
+           + "/" + creds["dbname"]
 
-    Ok(url)
-}
+    RETURN Ok(url)
 ```
 
 ### Supply Chain Security
@@ -425,79 +389,51 @@ The traditional security model is "castle and moat": everything inside the netwo
 
 In practice, "verify every request" often means validating a signed token (such as a JWT) on every incoming request. Here is a middleware for `axum` that validates JWT tokens and extracts claims, rejecting any request that lacks a valid token:
 
-```rust
-use axum::{
-    extract::Request,
-    http::{header, StatusCode},
-    middleware::Next,
-    response::Response,
-    Extension,
-};
-use jsonwebtoken::{decode, DecodingKey, TokenData, Validation, Algorithm};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Claims {
+```text
+STRUCTURE Claims
     /// Subject -- who the token was issued to (user ID or service name)
-    pub sub: String,
+    sub : String
     /// Expiration time (UTC timestamp)
-    pub exp: usize,
+    exp : Integer
     /// Issued-at time (UTC timestamp)
-    pub iat: usize,
+    iat : Integer
     /// Scopes or permissions granted to this token
-    pub scopes: Vec<String>,
-}
+    scopes : List<String>
 
 /// Middleware that extracts and validates a JWT from the Authorization header.
-/// On success, injects the decoded `Claims` as a request extension so
+/// On success, injects the decoded Claims as a request extension so
 /// downstream handlers can inspect identity and scopes without re-parsing.
-pub async fn require_auth(
-    mut request: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    let auth_header = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+PROCEDURE REQUIRE_AUTH(request, next) → Result<Response>
+    auth_header ← request.HEADERS().GET("Authorization")
+    IF auth_header IS NULL THEN RETURN Error(401 UNAUTHORIZED)
 
-    let token = auth_header
-        .strip_prefix("Bearer ")
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    token ← STRIP_PREFIX(auth_header, "Bearer ")
+    IF token IS NULL THEN RETURN Error(401 UNAUTHORIZED)
 
-    let decoding_key = DecodingKey::from_secret(
-        std::env::var("JWT_SIGNING_KEY")
-            .expect("JWT_SIGNING_KEY must be set")
-            .as_bytes(),
-    );
+    decoding_key ← GET_ENV_VAR("JWT_SIGNING_KEY")
+    IF decoding_key IS NOT SET THEN FAIL "JWT_SIGNING_KEY must be set"
 
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.validate_exp = true;
+    validation ← NEW Validation(algorithm ← HS256)
+    validation.validate_exp ← TRUE
     // Require the "sub" claim to be present
-    validation.set_required_spec_claims(&["sub", "exp", "iat"]);
+    validation.required_claims ← ["sub", "exp", "iat"]
 
-    let token_data: TokenData<Claims> = decode(token, &decoding_key, &validation)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    token_data ← JWT_DECODE(token, decoding_key, validation)
+    IF token_data IS INVALID THEN RETURN Error(401 UNAUTHORIZED)
 
-    // Make claims available to downstream handlers via Extension
-    request.extensions_mut().insert(token_data.claims);
+    // Make claims available to downstream handlers
+    request.EXTENSIONS().INSERT(token_data.claims)
 
-    Ok(next.run(request).await)
-}
+    RETURN Ok(next.RUN(request))
 
-// Usage with axum Router:
+// Usage with router:
 //
-//   use axum::{routing::get, middleware, Router};
+//   app ← Router
+//       .ROUTE("/api/protected", GET(PROTECTED_HANDLER))
+//       .ADD_LAYER(REQUIRE_AUTH)
 //
-//   let app = Router::new()
-//       .route("/api/protected", get(protected_handler))
-//       .layer(middleware::from_fn(require_auth));
-//
-//   async fn protected_handler(
-//       Extension(claims): Extension<Claims>,
-//   ) -> String {
-//       format!("Hello, {}. Your scopes: {:?}", claims.sub, claims.scopes)
-//   }
+//   PROCEDURE PROTECTED_HANDLER(claims) → String
+//       RETURN "Hello, " + claims.sub + ". Your scopes: " + claims.scopes
 ```
 
 This middleware enforces authentication at the application layer. In a zero-trust architecture, every service runs this kind of validation independently -- it does not rely on the network perimeter or an upstream gateway having already checked the token.

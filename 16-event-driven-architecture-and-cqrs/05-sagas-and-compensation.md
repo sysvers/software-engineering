@@ -131,151 +131,100 @@ Orchestration is the better choice for complex, multi-step business processes wh
 
 ## Rust Implementation: Saga Orchestrator
 
-```rust
-use std::fmt;
-use uuid::Uuid;
-
+```text
 /// Each step in a saga: a forward action and its compensating action.
-struct SagaStep<Ctx> {
-    name: &'static str,
-    action: Box<dyn Fn(&mut Ctx) -> Result<(), SagaError>>,
-    compensation: Box<dyn Fn(&mut Ctx) -> Result<(), SagaError>>,
-}
+STRUCTURE SagaStep:
+    name ← string
+    action ← FUNCTION(context) → Result
+    compensation ← FUNCTION(context) → Result
 
-#[derive(Debug)]
-enum SagaError {
-    StepFailed { step: String, reason: String },
-    CompensationFailed { step: String, reason: String },
-}
-
-impl fmt::Display for SagaError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SagaError::StepFailed { step, reason } =>
-                write!(f, "Step '{}' failed: {}", step, reason),
-            SagaError::CompensationFailed { step, reason } =>
-                write!(f, "Compensation for '{}' failed: {}", step, reason),
-        }
-    }
-}
+ENUMERATION SagaError:
+    StepFailed { step, reason }
+    CompensationFailed { step, reason }
 
 /// A generic saga orchestrator that runs steps in order and compensates on failure.
-struct SagaOrchestrator<Ctx> {
-    steps: Vec<SagaStep<Ctx>>,
-}
+STRUCTURE SagaOrchestrator:
+    steps ← list of SagaStep
 
-impl<Ctx> SagaOrchestrator<Ctx> {
-    fn new() -> Self {
-        SagaOrchestrator { steps: Vec::new() }
-    }
+PROCEDURE NEW_SAGA():
+    RETURN SagaOrchestrator { steps ← empty list }
 
-    fn add_step(
-        &mut self,
-        name: &'static str,
-        action: impl Fn(&mut Ctx) -> Result<(), SagaError> + 'static,
-        compensation: impl Fn(&mut Ctx) -> Result<(), SagaError> + 'static,
-    ) {
-        self.steps.push(SagaStep {
-            name,
-            action: Box::new(action),
-            compensation: Box::new(compensation),
-        });
-    }
+PROCEDURE ADD_STEP(saga, name, action, compensation):
+    APPEND SagaStep { name, action, compensation } TO saga.steps
 
-    /// Execute the saga. On failure, compensate all completed steps in reverse order.
-    fn execute(&self, ctx: &mut Ctx) -> Result<(), SagaError> {
-        let mut completed: Vec<usize> = Vec::new();
+/// Execute the saga. On failure, compensate all completed steps in reverse order.
+PROCEDURE EXECUTE(saga, context):
+    completed ← empty list
 
-        for (i, step) in self.steps.iter().enumerate() {
-            println!("[saga] Executing step: {}", step.name);
-            match (step.action)(ctx) {
-                Ok(()) => {
-                    completed.push(i);
-                }
-                Err(e) => {
-                    println!("[saga] Step '{}' failed, compensating...", step.name);
-                    // Compensate in reverse order
-                    for &j in completed.iter().rev() {
-                        println!("[saga] Compensating step: {}", self.steps[j].name);
-                        if let Err(comp_err) = (self.steps[j].compensation)(ctx) {
-                            // Compensation failure is serious -- log and continue
-                            eprintln!("[saga] CRITICAL: {}", comp_err);
-                        }
-                    }
-                    return Err(e);
-                }
-            }
-        }
+    FOR EACH (i, step) IN ENUMERATE(saga.steps):
+        PRINT "[saga] Executing step:", step.name
+        result ← step.action(context)
+        IF result IS Ok THEN
+            APPEND i TO completed
+        ELSE
+            PRINT "[saga] Step '" + step.name + "' failed, compensating..."
+            // Compensate in reverse order
+            FOR EACH j IN REVERSE(completed):
+                PRINT "[saga] Compensating step:", saga.steps[j].name
+                comp_result ← saga.steps[j].compensation(context)
+                IF comp_result IS error THEN
+                    // Compensation failure is serious -- log and continue
+                    LOG CRITICAL: comp_result
+            RETURN result (error)
 
-        println!("[saga] All steps completed successfully");
-        Ok(())
-    }
-}
+    PRINT "[saga] All steps completed successfully"
+    RETURN Ok
 
 // --- Application-specific context and usage ---
 
-struct OrderContext {
-    order_id: Uuid,
-    customer_id: String,
-    amount: f64,
-    inventory_reserved: bool,
-    payment_charged: bool,
-    shipment_created: bool,
-}
+STRUCTURE OrderContext:
+    order_id ← UUID
+    customer_id ← string
+    amount ← float
+    inventory_reserved ← boolean
+    payment_charged ← boolean
+    shipment_created ← boolean
 
-fn build_order_saga() -> SagaOrchestrator<OrderContext> {
-    let mut saga = SagaOrchestrator::new();
+PROCEDURE BUILD_ORDER_SAGA():
+    saga ← NEW_SAGA()
 
-    saga.add_step(
-        "reserve_inventory",
-        |ctx| {
+    ADD_STEP(saga, "reserve_inventory",
+        action: FUNCTION(ctx):
             // In production: send command to InventoryService, await response
-            println!("  Reserving inventory for order {}", ctx.order_id);
-            ctx.inventory_reserved = true;
-            Ok(())
-        },
-        |ctx| {
-            println!("  Releasing inventory for order {}", ctx.order_id);
-            ctx.inventory_reserved = false;
-            Ok(())
-        },
-    );
+            PRINT "  Reserving inventory for order", ctx.order_id
+            ctx.inventory_reserved ← true
+            RETURN Ok,
+        compensation: FUNCTION(ctx):
+            PRINT "  Releasing inventory for order", ctx.order_id
+            ctx.inventory_reserved ← false
+            RETURN Ok
+    )
 
-    saga.add_step(
-        "charge_payment",
-        |ctx| {
-            println!("  Charging ${:.2} for order {}", ctx.amount, ctx.order_id);
+    ADD_STEP(saga, "charge_payment",
+        action: FUNCTION(ctx):
+            PRINT "  Charging $" + ctx.amount + " for order", ctx.order_id
             // Simulate a failure for demonstration:
-            // return Err(SagaError::StepFailed {
-            //     step: "charge_payment".into(),
-            //     reason: "Card declined".into(),
-            // });
-            ctx.payment_charged = true;
-            Ok(())
-        },
-        |ctx| {
-            println!("  Refunding ${:.2} for order {}", ctx.amount, ctx.order_id);
-            ctx.payment_charged = false;
-            Ok(())
-        },
-    );
+            // RETURN Error(StepFailed { step ← "charge_payment", reason ← "Card declined" })
+            ctx.payment_charged ← true
+            RETURN Ok,
+        compensation: FUNCTION(ctx):
+            PRINT "  Refunding $" + ctx.amount + " for order", ctx.order_id
+            ctx.payment_charged ← false
+            RETURN Ok
+    )
 
-    saga.add_step(
-        "create_shipment",
-        |ctx| {
-            println!("  Creating shipment for order {}", ctx.order_id);
-            ctx.shipment_created = true;
-            Ok(())
-        },
-        |ctx| {
-            println!("  Cancelling shipment for order {}", ctx.order_id);
-            ctx.shipment_created = false;
-            Ok(())
-        },
-    );
+    ADD_STEP(saga, "create_shipment",
+        action: FUNCTION(ctx):
+            PRINT "  Creating shipment for order", ctx.order_id
+            ctx.shipment_created ← true
+            RETURN Ok,
+        compensation: FUNCTION(ctx):
+            PRINT "  Cancelling shipment for order", ctx.order_id
+            ctx.shipment_created ← false
+            RETURN Ok
+    )
 
-    saga
-}
+    RETURN saga
 ```
 
 The orchestrator is generic over `Ctx`, so it can be reused for different saga types. In a production system, the actions would send commands over a message broker and the orchestrator would be async, persisting its state between steps so it can survive restarts.

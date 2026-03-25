@@ -10,98 +10,44 @@ Creational patterns control how objects and structs are created. They provide fl
 
 A struct has many fields, some required, some optional, some with sensible defaults. Constructors with 10+ parameters are unreadable, error-prone, and impossible to extend without breaking every call site. You need a way to construct complex objects step-by-step while keeping call sites readable.
 
-### Rust Implementation
+### Implementation
 
-```rust
-pub struct HttpRequest {
-    url: String,
-    method: String,
-    headers: Vec<(String, String)>,
-    body: Option<String>,
-    timeout_ms: u64,
-    follow_redirects: bool,
-    max_retries: u32,
-}
+```text
+STRUCTURE HttpRequest
+    url: string, method: string, headers: list of (string, string)
+    body: optional string, timeout_ms: unsigned integer
+    follow_redirects: boolean, max_retries: unsigned integer
 
-pub struct HttpRequestBuilder {
-    url: String,
-    method: String,
-    headers: Vec<(String, String)>,
-    body: Option<String>,
-    timeout_ms: u64,
-    follow_redirects: bool,
-    max_retries: u32,
-}
+STRUCTURE HttpRequestBuilder
+    (same fields as HttpRequest)
 
-impl HttpRequestBuilder {
-    pub fn new(url: &str) -> Self {
-        Self {
-            url: url.to_string(),
-            method: "GET".to_string(),
-            headers: vec![],
-            body: None,
-            timeout_ms: 30_000,
-            follow_redirects: true,
-            max_retries: 3,
+    FUNCTION NEW(url: string) -> HttpRequestBuilder
+        RETURN HttpRequestBuilder {
+            url, method: "GET", headers: [], body: None,
+            timeout_ms: 30000, follow_redirects: true, max_retries: 3
         }
-    }
 
-    pub fn method(mut self, method: &str) -> Self {
-        self.method = method.to_string();
-        self
-    }
+    FUNCTION METHOD(self, method) -> self;    self.method <- method; RETURN self
+    FUNCTION HEADER(self, key, value) -> self; APPEND (key, value) TO headers; RETURN self
+    FUNCTION BODY(self, body) -> self;         self.body <- Some(body); RETURN self
+    FUNCTION TIMEOUT(self, ms) -> self;        self.timeout_ms <- ms; RETURN self
+    FUNCTION NO_REDIRECTS(self) -> self;       self.follow_redirects <- false; RETURN self
+    FUNCTION MAX_RETRIES(self, n) -> self;     self.max_retries <- n; RETURN self
 
-    pub fn header(mut self, key: &str, value: &str) -> Self {
-        self.headers.push((key.to_string(), value.to_string()));
-        self
-    }
-
-    pub fn body(mut self, body: &str) -> Self {
-        self.body = Some(body.to_string());
-        self
-    }
-
-    pub fn timeout(mut self, ms: u64) -> Self {
-        self.timeout_ms = ms;
-        self
-    }
-
-    pub fn no_redirects(mut self) -> Self {
-        self.follow_redirects = false;
-        self
-    }
-
-    pub fn max_retries(mut self, n: u32) -> Self {
-        self.max_retries = n;
-        self
-    }
-
-    /// Validates and produces the final request.
-    /// Returns an error if required invariants are not met.
-    pub fn build(self) -> Result<HttpRequest, BuildError> {
-        if self.url.is_empty() {
-            return Err(BuildError::MissingField("url"));
-        }
-        Ok(HttpRequest {
-            url: self.url,
-            method: self.method,
-            headers: self.headers,
-            body: self.body,
-            timeout_ms: self.timeout_ms,
-            follow_redirects: self.follow_redirects,
-            max_retries: self.max_retries,
-        })
-    }
-}
+    // Validates and produces the final request.
+    FUNCTION BUILD(self) -> HttpRequest or BuildError
+        IF self.url IS empty
+            RETURN Err(BuildError::MissingField("url"))
+        RETURN Ok(HttpRequest { url, method, headers, body, timeout_ms, follow_redirects, max_retries })
 
 // Usage -- reads like a sentence
-let request = HttpRequestBuilder::new("https://api.example.com/users")
-    .method("POST")
-    .header("Content-Type", "application/json")
-    .body(r#"{"name": "Alice"}"#)
-    .timeout(5_000)
-    .no_redirects()
-    .build()?;
+request <- HttpRequestBuilder.NEW("https://api.example.com/users")
+    .METHOD("POST")
+    .HEADER("Content-Type", "application/json")
+    .BODY('{"name": "Alice"}')
+    .TIMEOUT(5000)
+    .NO_REDIRECTS()
+    .BUILD()?
 ```
 
 ### Real-World Use Cases
@@ -139,102 +85,60 @@ let request = HttpRequestBuilder::new("https://api.example.com/users")
 
 You need to create objects of different concrete types based on runtime conditions (configuration, user input, environment). Callers should not know which concrete type they receive -- they work through a shared trait interface. This decouples creation logic from usage logic.
 
-### Rust Implementation
+### Implementation
 
-```rust
-use std::error::Error;
+```text
+INTERFACE NotificationSender
+    FUNCTION SEND(to: string, message: string) -> void or Error
+    FUNCTION NAME() -> string
 
-trait NotificationSender: Send + Sync {
-    fn send(&self, to: &str, message: &str) -> Result<(), Box<dyn Error>>;
-    fn name(&self) -> &str;
-}
+STRUCTURE EmailSender { smtp_host: string }
+    FUNCTION SEND(to, message) -> PRINT "Sending email to " + to + " via " + smtp_host; RETURN Ok
+    FUNCTION NAME() -> "email"
 
-struct EmailSender {
-    smtp_host: String,
-}
+STRUCTURE SmsSender { api_key: string }
+    FUNCTION SEND(to, message) -> PRINT "Sending SMS to " + to; RETURN Ok
+    FUNCTION NAME() -> "sms"
 
-impl NotificationSender for EmailSender {
-    fn send(&self, to: &str, message: &str) -> Result<(), Box<dyn Error>> {
-        println!("Sending email to {to} via {}: {message}", self.smtp_host);
-        Ok(())
-    }
-    fn name(&self) -> &str { "email" }
-}
+STRUCTURE SlackSender { webhook_url: string }
+    FUNCTION SEND(to, message) -> PRINT "Posting to Slack channel " + to; RETURN Ok
+    FUNCTION NAME() -> "slack"
 
-struct SmsSender {
-    api_key: String,
-}
-
-impl NotificationSender for SmsSender {
-    fn send(&self, to: &str, message: &str) -> Result<(), Box<dyn Error>> {
-        println!("Sending SMS to {to}: {message}");
-        Ok(())
-    }
-    fn name(&self) -> &str { "sms" }
-}
-
-struct SlackSender {
-    webhook_url: String,
-}
-
-impl NotificationSender for SlackSender {
-    fn send(&self, to: &str, message: &str) -> Result<(), Box<dyn Error>> {
-        println!("Posting to Slack channel {to}: {message}");
-        Ok(())
-    }
-    fn name(&self) -> &str { "slack" }
-}
-
-/// Factory function -- callers get a trait object, never a concrete type.
-fn create_sender(config: &NotificationConfig) -> Result<Box<dyn NotificationSender>, ConfigError> {
-    match config.channel.as_str() {
-        "email" => Ok(Box::new(EmailSender {
-            smtp_host: config.get("smtp_host")?.to_string(),
-        })),
-        "sms" => Ok(Box::new(SmsSender {
-            api_key: config.get("api_key")?.to_string(),
-        })),
-        "slack" => Ok(Box::new(SlackSender {
-            webhook_url: config.get("webhook_url")?.to_string(),
-        })),
-        other => Err(ConfigError::UnknownChannel(other.to_string())),
-    }
-}
+// Factory function -- callers get an interface, never a concrete type.
+FUNCTION CREATE_SENDER(config) -> NotificationSender or ConfigError
+    MATCH config.channel
+        CASE "email": RETURN Ok(NEW EmailSender { smtp_host: config.get("smtp_host") })
+        CASE "sms":   RETURN Ok(NEW SmsSender { api_key: config.get("api_key") })
+        CASE "slack":  RETURN Ok(NEW SlackSender { webhook_url: config.get("webhook_url") })
+        DEFAULT:       RETURN Err(ConfigError::UnknownChannel(channel))
 
 // Usage -- the caller does not know or care which sender it gets
-let sender = create_sender(&config)?;
-sender.send("alice@example.com", "Your order shipped!")?;
+sender <- CREATE_SENDER(config)?
+sender.SEND("alice@example.com", "Your order shipped!")?
 ```
 
-### Enum-Based Factory (Rust-Idiomatic Alternative)
+### Enum-Based Factory (Idiomatic Alternative)
 
 When the set of variants is known at compile time, an enum factory avoids heap allocation:
 
-```rust
-enum Sender {
-    Email(EmailSender),
-    Sms(SmsSender),
-    Slack(SlackSender),
-}
+```text
+ENUMERATION Sender
+    Email(EmailSender)
+    Sms(SmsSender)
+    Slack(SlackSender)
 
-impl Sender {
-    fn create(channel: &str) -> Result<Self, ConfigError> {
-        match channel {
-            "email" => Ok(Sender::Email(EmailSender::default())),
-            "sms" => Ok(Sender::Sms(SmsSender::default())),
-            "slack" => Ok(Sender::Slack(SlackSender::default())),
-            other => Err(ConfigError::UnknownChannel(other.to_string())),
-        }
-    }
+    FUNCTION CREATE(channel: string) -> Sender or ConfigError
+        MATCH channel
+            CASE "email": RETURN Ok(Sender::Email(DEFAULT EmailSender))
+            CASE "sms":   RETURN Ok(Sender::Sms(DEFAULT SmsSender))
+            CASE "slack":  RETURN Ok(Sender::Slack(DEFAULT SlackSender))
+            DEFAULT:       RETURN Err(ConfigError::UnknownChannel(channel))
 
-    fn send(&self, to: &str, message: &str) -> Result<(), Box<dyn std::error::Error>> {
-        match self {
-            Sender::Email(s) => s.send(to, message),
-            Sender::Sms(s) => s.send(to, message),
-            Sender::Slack(s) => s.send(to, message),
-        }
-    }
-}
+    FUNCTION SEND(to: string, message: string) -> void or Error
+        MATCH self
+            CASE Sender::Email(s): s.SEND(to, message)
+            CASE Sender::Sms(s):   s.SEND(to, message)
+            CASE Sender::Slack(s): s.SEND(to, message)
 ```
 
 ### Real-World Use Cases
@@ -277,76 +181,62 @@ You need exactly one instance of a resource shared across the application: a dat
 3. **Tight coupling** -- Every user of the singleton depends on it directly, making it hard to change the implementation.
 4. **Initialization order** -- Who initializes it? When? What if initialization fails? What if it is accessed before initialization?
 
-### Rust Implementation (When You Must)
+### Implementation (When You Must)
 
-```rust
-use std::sync::OnceLock;
+```text
+STRUCTURE AppConfig
+    database_url: string
+    max_connections: unsigned integer
+    log_level: string
 
-struct AppConfig {
-    database_url: String,
-    max_connections: u32,
-    log_level: String,
-}
+GLOBAL CONFIG <- ONE-TIME initialized AppConfig
 
-static CONFIG: OnceLock<AppConfig> = OnceLock::new();
+// Call once at startup. Panics if called twice.
+FUNCTION INIT_CONFIG(path: string)
+    config <- LOAD_CONFIG_FROM_FILE(path)
+    CONFIG.SET(config)
 
-/// Call once at startup. Panics if called twice.
-fn init_config(path: &str) {
-    let config = load_config_from_file(path).expect("Failed to load config");
-    CONFIG.set(config).expect("Config already initialized");
-}
-
-/// Access the config from anywhere. Panics if not yet initialized.
-fn config() -> &'static AppConfig {
-    CONFIG.get().expect("Config not initialized -- call init_config() first")
-}
+// Access the config from anywhere. Panics if not yet initialized.
+FUNCTION CONFIG() -> AppConfig reference
+    RETURN CONFIG.GET()
 ```
 
 Using `once_cell::sync::Lazy` for automatic initialization:
 
-```rust
-use once_cell::sync::Lazy;
-use std::sync::Mutex;
+```text
+GLOBAL LOGGER <- LAZY initialized locked list of strings
 
-static LOGGER: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
-    Mutex::new(Vec::new())
-});
-
-fn log_message(msg: &str) {
-    LOGGER.lock().unwrap().push(msg.to_string());
-}
+FUNCTION LOG_MESSAGE(msg: string)
+    LOCK LOGGER
+    APPEND msg TO LOGGER
 ```
 
 ### The Better Alternative: Dependency Injection
 
-```rust
-struct AppState {
-    config: AppConfig,
-    db_pool: PgPool,
-    cache: RedisPool,
-}
+```text
+STRUCTURE AppState
+    config: AppConfig
+    db_pool: PgPool
+    cache: RedisPool
 
 // Pass dependencies explicitly -- no globals
-async fn handle_request(state: &AppState, req: Request) -> Response {
-    let user = state.db_pool.query("SELECT ...").await?;
-    let cached = state.cache.get(&key).await?;
+ASYNC FUNCTION HANDLE_REQUEST(state: AppState, req: Request) -> Response
+    user <- state.db_pool.QUERY("SELECT ...")
+    cached <- state.cache.GET(key)
     // ...
-}
 
-// In main(), build the state once and pass it everywhere
-#[tokio::main]
-async fn main() {
-    let config = load_config("config.toml")?;
-    let db_pool = PgPool::connect(&config.database_url).await?;
-    let cache = RedisPool::connect(&config.redis_url).await?;
+// In MAIN(), build the state once and pass it everywhere
+ASYNC FUNCTION MAIN()
+    config <- LOAD_CONFIG("config.toml")
+    db_pool <- PgPool.CONNECT(config.database_url)
+    cache <- RedisPool.CONNECT(config.redis_url)
 
-    let state = Arc::new(AppState { config, db_pool, cache });
+    state <- SHARED(AppState { config, db_pool, cache })
 
-    // Web frameworks like axum accept shared state
-    let app = Router::new()
-        .route("/users", get(list_users))
-        .with_state(state);
-}
+    // Web frameworks accept shared state
+    app <- Router.NEW()
+        .ROUTE("/users", GET -> LIST_USERS)
+        .WITH_STATE(state)
 ```
 
 ### Real-World Use Cases

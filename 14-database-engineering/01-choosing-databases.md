@@ -16,52 +16,31 @@ PostgreSQL supports relational data, JSONB for semi-structured data, full-text s
 
 **Real-world use case:** A SaaS billing platform with users, subscriptions, invoices, and payments. These entities have strong relationships (a subscription belongs to a user, an invoice has many line items). ACID transactions guarantee that creating an invoice and updating the subscription status happen atomically.
 
-```rust
-use sqlx::PgPool;
+```text
+STRUCTURE Invoice:
+    id ← integer
+    user_id ← integer
+    total_cents ← integer
+    status ← string
+    created_at ← datetime
 
-#[derive(sqlx::FromRow)]
-struct Invoice {
-    id: i64,
-    user_id: i64,
-    total_cents: i64,
-    status: String,
-    created_at: chrono::DateTime<chrono::Utc>,
-}
+PROCEDURE CREATE_INVOICE_WITH_LINE_ITEMS(pool, user_id, items):
+    tx ← AWAIT BEGIN_TRANSACTION(pool)
 
-async fn create_invoice_with_line_items(
-    pool: &PgPool,
-    user_id: i64,
-    items: &[(String, i64)],
-) -> Result<Invoice, sqlx::Error> {
-    let mut tx = pool.begin().await?;
+    total ← SUM OF cents FOR EACH (description, cents) IN items
 
-    let total: i64 = items.iter().map(|(_, cents)| cents).sum();
-
-    let invoice = sqlx::query_as::<_, Invoice>(
+    invoice ← AWAIT QUERY tx:
         "INSERT INTO invoices (user_id, total_cents, status)
-         VALUES ($1, $2, 'pending')
+         VALUES (user_id, total, 'pending')
          RETURNING id, user_id, total_cents, status, created_at"
-    )
-    .bind(user_id)
-    .bind(total)
-    .fetch_one(&mut *tx)
-    .await?;
 
-    for (description, amount_cents) in items {
-        sqlx::query(
+    FOR EACH (description, amount_cents) IN items:
+        AWAIT EXECUTE tx:
             "INSERT INTO invoice_line_items (invoice_id, description, amount_cents)
-             VALUES ($1, $2, $3)"
-        )
-        .bind(invoice.id)
-        .bind(description)
-        .bind(amount_cents)
-        .execute(&mut *tx)
-        .await?;
-    }
+             VALUES (invoice.id, description, amount_cents)"
 
-    tx.commit().await?;
-    Ok(invoice)
-}
+    AWAIT COMMIT(tx)
+    RETURN invoice
 ```
 
 ### When to pick MySQL over PostgreSQL
@@ -93,19 +72,15 @@ Documents fall apart when you need to query across relationships. "Show me all u
 
 **Real-world pitfall:** A startup builds their entire e-commerce platform on MongoDB. Six months later, finance needs revenue reports broken down by product category, region, and time period. These cross-collection aggregations are painful. They either build a separate analytics pipeline or migrate to PostgreSQL.
 
-```rust
-// Using the mongodb crate to insert a flexible document
-use mongodb::{Client, bson::doc};
-
-async fn store_product(client: &Client, product: serde_json::Value) -> mongodb::error::Result<()> {
-    let db = client.database("catalog");
-    let collection = db.collection::<mongodb::bson::Document>("products");
+```text
+// Insert a flexible document into MongoDB
+PROCEDURE STORE_PRODUCT(client, product):
+    db ← client.DATABASE("catalog")
+    collection ← db.COLLECTION("products")
 
     // Each product can have different fields
-    let doc = mongodb::bson::to_document(&product)?;
-    collection.insert_one(doc).await?;
-    Ok(())
-}
+    doc ← CONVERT product TO document
+    AWAIT collection.INSERT_ONE(doc)
 ```
 
 ---
@@ -129,50 +104,28 @@ Redis supports strings, hashes, lists, sets, sorted sets, streams, and HyperLogL
 | **Pub/sub** | `PUBLISH channel message` / `SUBSCRIBE channel` |
 | **Queue** | `LPUSH queue task` / `BRPOP queue 0` |
 
-```rust
-use redis::AsyncCommands;
-
-async fn cache_user_profile(
-    conn: &mut redis::aio::MultiplexedConnection,
-    user_id: i64,
-    profile_json: &str,
-) -> redis::RedisResult<()> {
+```text
+PROCEDURE CACHE_USER_PROFILE(redis_conn, user_id, profile_json):
     // Cache for 1 hour
-    conn.set_ex(
-        format!("user:profile:{}", user_id),
-        profile_json,
-        3600,
-    ).await?;
-    Ok(())
-}
+    AWAIT redis_conn.SET_WITH_EXPIRY("user:profile:" + user_id, profile_json, 3600)
 
-async fn get_or_fetch_profile(
-    redis_conn: &mut redis::aio::MultiplexedConnection,
-    pg_pool: &sqlx::PgPool,
-    user_id: i64,
-) -> anyhow::Result<UserProfile> {
-    let cache_key = format!("user:profile:{}", user_id);
+PROCEDURE GET_OR_FETCH_PROFILE(redis_conn, pg_pool, user_id):
+    cache_key ← "user:profile:" + user_id
 
     // Try cache first
-    let cached: Option<String> = redis_conn.get(&cache_key).await?;
-    if let Some(json) = cached {
-        return Ok(serde_json::from_str(&json)?);
-    }
+    cached ← AWAIT redis_conn.GET(cache_key)
+    IF cached IS present THEN
+        RETURN PARSE_JSON(cached) AS UserProfile
 
     // Cache miss: fetch from PostgreSQL
-    let profile = sqlx::query_as::<_, UserProfile>(
-        "SELECT id, name, email, avatar_url FROM users WHERE id = $1"
-    )
-    .bind(user_id)
-    .fetch_one(pg_pool)
-    .await?;
+    profile ← AWAIT QUERY pg_pool:
+        "SELECT id, name, email, avatar_url FROM users WHERE id = user_id"
 
     // Populate cache
-    let json = serde_json::to_string(&profile)?;
-    redis_conn.set_ex(&cache_key, &json, 3600).await?;
+    json ← TO_JSON_STRING(profile)
+    AWAIT redis_conn.SET_WITH_EXPIRY(cache_key, json, 3600)
 
-    Ok(profile)
-}
+    RETURN profile
 ```
 
 ### Pitfall: Redis as a primary database

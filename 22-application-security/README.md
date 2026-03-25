@@ -21,48 +21,38 @@ The OWASP Top 10 is the industry-standard list of the most critical web applicat
 
 **A01: Broken Access Control** — Users can act outside their intended permissions. Missing authorization checks on endpoints, IDOR (Insecure Direct Object Reference), or exposing admin functionality to regular users.
 
-```rust
-use axum::{extract::Path, http::StatusCode, Extension};
+```text
+// BAD -- no authorization check, any user can view any order
+PROCEDURE GET_ORDER_BAD(order_id) → Result<Order>
+    order ← DB_GET_ORDER(order_id)
+    IF order NOT FOUND THEN RETURN Error(404 NOT FOUND)
+    RETURN Ok(order)
 
-// BAD — no authorization check, any user can view any order
-async fn get_order_bad(Path(order_id): Path<u64>) -> Result<Json<Order>, StatusCode> {
-    let order = db::get_order(order_id).await.map_err(|_| StatusCode::NOT_FOUND)?;
-    Ok(Json(order))
-}
-
-// GOOD — verify the authenticated user owns the resource
-async fn get_order(
-    Path(order_id): Path<u64>,
-    Extension(current_user): Extension<AuthenticatedUser>,
-) -> Result<Json<Order>, StatusCode> {
-    let order = db::get_order(order_id).await.map_err(|_| StatusCode::NOT_FOUND)?;
-    if order.user_id != current_user.id {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    Ok(Json(order))
-}
+// GOOD -- verify the authenticated user owns the resource
+PROCEDURE GET_ORDER(order_id, current_user) → Result<Order>
+    order ← DB_GET_ORDER(order_id)
+    IF order NOT FOUND THEN RETURN Error(404 NOT FOUND)
+    IF order.user_id ≠ current_user.id THEN
+        RETURN Error(403 FORBIDDEN)
+    END IF
+    RETURN Ok(order)
 ```
 
 **A02: Cryptographic Failures** — Storing passwords in plaintext, using broken hashing algorithms (MD5, SHA1 for passwords), transmitting sensitive data without TLS, or hardcoding encryption keys.
 
 **A03: Injection** — Untrusted data sent to an interpreter as part of a command or query. SQL injection, command injection, LDAP injection. Parameterized queries eliminate SQL injection entirely.
 
-```rust
-use sqlx::PgPool;
+```text
+// BAD -- string interpolation creates SQL injection
+PROCEDURE FIND_USER_BAD(pool, email) → Result<User>
+    query ← "SELECT * FROM users WHERE email = '" + email + "'"
+    RETURN EXECUTE_QUERY(pool, query)
 
-// BAD — string interpolation creates SQL injection
-async fn find_user_bad(pool: &PgPool, email: &str) -> Result<User, sqlx::Error> {
-    let query = format!("SELECT * FROM users WHERE email = '{}'", email);
-    sqlx::query_as::<_, User>(&query).fetch_one(pool).await
-}
-
-// GOOD — parameterized query, the database driver handles escaping
-async fn find_user(pool: &PgPool, email: &str) -> Result<User, sqlx::Error> {
-    sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-}
+// GOOD -- parameterized query, the database driver handles escaping
+PROCEDURE FIND_USER(pool, email) → Result<User>
+    RETURN EXECUTE_QUERY(pool,
+        "SELECT * FROM users WHERE email = $1",
+        BIND email)
 ```
 
 **A04: Insecure Design** — Missing threat modeling. No rate limiting on login endpoints. No account lockout. Security controls missing by design, not by implementation bug.
@@ -87,45 +77,30 @@ Authentication answers: "Who are you?"
 
 The server creates a session after login, stores it server-side (database, Redis), and sends a session ID in a cookie. Every subsequent request includes the cookie. The server looks up the session to identify the user.
 
-```rust
-use axum::{extract::Form, http::{HeaderMap, StatusCode}};
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use uuid::Uuid;
-
-async fn login(
-    Form(credentials): Form<LoginRequest>,
-    jar: CookieJar,
-    Extension(pool): Extension<PgPool>,
-    Extension(session_store): Extension<RedisPool>,
-) -> Result<(CookieJar, StatusCode), StatusCode> {
-    let user = db::find_user_by_email(&pool, &credentials.email)
-        .await
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+```text
+PROCEDURE LOGIN(credentials, cookie_jar, pool, session_store) → Result<(CookieJar, StatusCode)>
+    user ← DB_FIND_USER_BY_EMAIL(pool, credentials.email)
+    IF user NOT FOUND THEN RETURN Error(401 UNAUTHORIZED)
 
     // Verify password using argon2
-    let parsed_hash = argon2::PasswordHash::new(&user.password_hash)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    argon2::Argon2::default()
-        .verify_password(credentials.password.as_bytes(), &parsed_hash)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    parsed_hash ← PARSE_PASSWORD_HASH(user.password_hash)
+    IF VERIFY_PASSWORD(credentials.password, parsed_hash) FAILS THEN
+        RETURN Error(401 UNAUTHORIZED)
+    END IF
 
     // Create session
-    let session_id = Uuid::new_v4().to_string();
-    session_store::set(&session_store, &session_id, user.id, Duration::from_secs(86400))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    session_id ← GENERATE_UUID_V4()
+    SESSION_STORE_SET(session_store, session_id, user.id, ttl ← 86400 seconds)
 
-    let cookie = Cookie::build(("session_id", session_id))
-        .http_only(true)
-        .secure(true)
-        .same_site(SameSite::Strict)
-        .max_age(time::Duration::days(1))
-        .path("/")
-        .build();
+    cookie ← BUILD_COOKIE("session_id", session_id,
+        http_only ← TRUE,
+        secure ← TRUE,
+        same_site ← Strict,
+        max_age ← 1 day,
+        path ← "/"
+    )
 
-    Ok((jar.add(cookie), StatusCode::OK))
-}
+    RETURN Ok(cookie_jar.ADD(cookie), 200 OK)
 ```
 
 Key properties of the session cookie:
@@ -137,35 +112,27 @@ Key properties of the session cookie:
 
 JWTs are self-contained tokens. The server signs them; clients send them in the `Authorization` header. No server-side session storage needed. The server verifies the signature to trust the claims.
 
-```rust
-use jsonwebtoken::{encode, decode, Header, Algorithm, Validation, EncodingKey, DecodingKey};
-use serde::{Deserialize, Serialize};
-use chrono::Utc;
+```text
+STRUCTURE Claims
+    sub : String       // user id
+    role : String      // user role
+    exp : Integer      // expiration (UNIX timestamp)
+    iat : Integer      // issued at
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,       // user id
-    role: String,      // user role
-    exp: usize,        // expiration (UNIX timestamp)
-    iat: usize,        // issued at
-}
+PROCEDURE CREATE_JWT(user_id, role, secret) → Result<String>
+    now ← CURRENT_UNIX_TIMESTAMP()
+    claims ← Claims {
+        sub ← user_id,
+        role ← role,
+        exp ← now + 3600,  // 1 hour
+        iat ← now
+    }
+    RETURN JWT_ENCODE(header ← DEFAULT_HEADER, claims, signing_key ← secret)
 
-fn create_jwt(user_id: &str, role: &str, secret: &[u8]) -> Result<String, jsonwebtoken::errors::Error> {
-    let now = Utc::now().timestamp() as usize;
-    let claims = Claims {
-        sub: user_id.to_string(),
-        role: role.to_string(),
-        exp: now + 3600,  // 1 hour
-        iat: now,
-    };
-    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret))
-}
-
-fn verify_jwt(token: &str, secret: &[u8]) -> Result<Claims, jsonwebtoken::errors::Error> {
-    let validation = Validation::new(Algorithm::HS256);
-    let token_data = decode::<Claims>(token, &DecodingKey::from_secret(secret), &validation)?;
-    Ok(token_data.claims)
-}
+PROCEDURE VERIFY_JWT(token, secret) → Result<Claims>
+    validation ← NEW Validation(algorithm ← HS256)
+    token_data ← JWT_DECODE(token, decoding_key ← secret, validation)
+    RETURN Ok(token_data.claims)
 ```
 
 **Sessions vs. JWTs:**
@@ -198,51 +165,27 @@ Authorization answers: "What are you allowed to do?"
 
 Users are assigned roles. Roles have permissions. Simple and effective for most applications.
 
-```rust
-use std::collections::HashSet;
+```text
+ENUMERATION Permission
+    ReadOrders, CreateOrders, DeleteOrders, ManageUsers, ViewAnalytics
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Permission {
-    ReadOrders,
-    CreateOrders,
-    DeleteOrders,
-    ManageUsers,
-    ViewAnalytics,
-}
+ENUMERATION Role
+    Viewer, Editor, Admin
 
-#[derive(Debug, Clone)]
-enum Role {
-    Viewer,
-    Editor,
-    Admin,
-}
+PROCEDURE PERMISSIONS_FOR_ROLE(role) → Set<Permission>
+    MATCH role
+        CASE Viewer  → RETURN {ReadOrders, ViewAnalytics}
+        CASE Editor  → RETURN {ReadOrders, CreateOrders, ViewAnalytics}
+        CASE Admin   → RETURN {ReadOrders, CreateOrders, DeleteOrders,
+                                ManageUsers, ViewAnalytics}
 
-fn permissions_for_role(role: &Role) -> HashSet<Permission> {
-    match role {
-        Role::Viewer => HashSet::from([Permission::ReadOrders, Permission::ViewAnalytics]),
-        Role::Editor => HashSet::from([
-            Permission::ReadOrders,
-            Permission::CreateOrders,
-            Permission::ViewAnalytics,
-        ]),
-        Role::Admin => HashSet::from([
-            Permission::ReadOrders,
-            Permission::CreateOrders,
-            Permission::DeleteOrders,
-            Permission::ManageUsers,
-            Permission::ViewAnalytics,
-        ]),
-    }
-}
-
-fn authorize(user: &AuthenticatedUser, required: Permission) -> Result<(), StatusCode> {
-    let perms = permissions_for_role(&user.role);
-    if perms.contains(&required) {
-        Ok(())
-    } else {
-        Err(StatusCode::FORBIDDEN)
-    }
-}
+PROCEDURE AUTHORIZE(user, required_permission) → Result
+    perms ← PERMISSIONS_FOR_ROLE(user.role)
+    IF required_permission IN perms THEN
+        RETURN Ok
+    ELSE
+        RETURN Error(403 FORBIDDEN)
+    END IF
 ```
 
 **Attribute-Based Access Control (ABAC):**
@@ -257,55 +200,33 @@ RBAC works for most applications. Reach for ABAC when your authorization rules d
 
 Never store passwords in plaintext or use fast hashing algorithms (MD5, SHA-256). Use a memory-hard, slow-by-design algorithm like Argon2.
 
-```rust
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
+```text
+PROCEDURE HASH_PASSWORD(password) → Result<String>
+    salt ← GENERATE_RANDOM_SALT()
+    hash ← ARGON2_HASH(password, salt)
+    RETURN Ok(TO_STRING(hash))
 
-fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let hash = argon2.hash_password(password.as_bytes(), &salt)?;
-    Ok(hash.to_string())
-}
-
-fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::password_hash::Error> {
-    let parsed_hash = PasswordHash::new(hash)?;
-    Ok(Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok())
-}
+PROCEDURE VERIFY_PASSWORD(password, hash) → Result<Boolean>
+    parsed_hash ← PARSE_PASSWORD_HASH(hash)
+    RETURN Ok(ARGON2_VERIFY(password, parsed_hash) SUCCEEDS)
 ```
 
 **Input validation:**
 
 Validate all input at the boundary. Use strong types to make invalid states unrepresentable.
 
-```rust
-use validator::Validate;
+```text
+STRUCTURE CreateUserRequest
+    email : String          // must be valid email format
+    password : String       // length between 8 and 128
+    name : String           // length between 1 and 100
 
-#[derive(Debug, Deserialize, Validate)]
-struct CreateUserRequest {
-    #[validate(email)]
-    email: String,
-
-    #[validate(length(min = 8, max = 128))]
-    password: String,
-
-    #[validate(length(min = 1, max = 100))]
-    name: String,
-}
-
-async fn create_user(
-    Json(payload): Json<CreateUserRequest>,
-) -> Result<Json<User>, (StatusCode, String)> {
-    payload.validate().map_err(|e| {
-        (StatusCode::BAD_REQUEST, format!("Validation error: {}", e))
-    })?;
+PROCEDURE CREATE_USER(payload) → Result<User>
+    IF NOT VALIDATE(payload) THEN
+        RETURN Error(400 BAD REQUEST, "Validation error: " + errors)
+    END IF
     // proceed with validated data
-    todo!()
-}
+    ...
 ```
 
 ### XSS, CSRF, and SQL Injection Prevention
@@ -322,21 +243,16 @@ Prevention:
 - Set `Content-Security-Policy` headers to restrict script sources.
 - Use `HttpOnly` cookies so JavaScript cannot steal session tokens.
 
-```rust
-use axum::response::Html;
-
-// BAD — raw user input injected into HTML
-async fn profile_bad(name: &str) -> Html<String> {
-    Html(format!("<h1>Hello, {}</h1>", name))
+```text
+// BAD -- raw user input injected into HTML
+PROCEDURE PROFILE_BAD(name) → HTML
+    RETURN HTML("<h1>Hello, " + name + "</h1>")
     // If name is: <script>alert('xss')</script>, it executes
-}
 
-// GOOD — use a template engine that escapes by default (Askama)
-#[derive(askama::Template)]
-#[template(path = "profile.html")]
-struct ProfileTemplate<'a> {
-    name: &'a str,  // Askama auto-escapes this in the template
-}
+// GOOD -- use a template engine that escapes by default
+STRUCTURE ProfileTemplate
+    name : String   // Template engine auto-escapes this in the template
+// Render using template file "profile.html" with auto-escaping
 ```
 
 **Cross-Site Request Forgery (CSRF):**
@@ -349,28 +265,19 @@ Prevention: `SameSite=Strict` cookies, anti-CSRF tokens, or requiring a custom h
 
 ### Security Headers
 
-```rust
-use axum::{middleware, http::{Request, HeaderValue}, response::Response};
+```text
+PROCEDURE SECURITY_HEADERS(request, next) → Response
+    response ← next.RUN(request)
+    headers ← response.HEADERS()
 
-async fn security_headers<B>(request: Request<B>, next: middleware::Next<B>) -> Response {
-    let mut response = next.run(request).await;
-    let headers = response.headers_mut();
+    SET headers["X-Content-Type-Options"] ← "nosniff"
+    SET headers["X-Frame-Options"] ← "DENY"
+    SET headers["X-XSS-Protection"] ← "0"
+    SET headers["Strict-Transport-Security"] ← "max-age=31536000; includeSubDomains"
+    SET headers["Content-Security-Policy"] ← "default-src 'self'; script-src 'self'; style-src 'self'"
+    SET headers["Referrer-Policy"] ← "strict-origin-when-cross-origin"
 
-    headers.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
-    headers.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
-    headers.insert("X-XSS-Protection", HeaderValue::from_static("0"));
-    headers.insert(
-        "Strict-Transport-Security",
-        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-    );
-    headers.insert(
-        "Content-Security-Policy",
-        HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self'"),
-    );
-    headers.insert("Referrer-Policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
-
-    response
-}
+    RETURN response
 ```
 
 ### Security Testing

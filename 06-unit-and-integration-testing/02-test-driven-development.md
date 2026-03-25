@@ -37,36 +37,27 @@ Let us build a shopping cart from scratch using strict TDD. Every line of produc
 
 **Red** — write the test first:
 
-```rust
-// src/cart.rs
-#[cfg(test)]
-mod tests {
-    use super::*;
+```text
+// src/cart
+TEST MODULE
 
-    #[test]
-    fn empty_cart_has_zero_total() {
-        let cart = ShoppingCart::new();
-        assert_eq!(cart.total(), 0.0);
-    }
-}
+    TEST empty_cart_has_zero_total
+        cart ← NEW ShoppingCart()
+        ASSERT cart.TOTAL() = 0.0
 ```
 
 This will not compile because `ShoppingCart` does not exist.
 
 **Green** — write the minimum code:
 
-```rust
-pub struct ShoppingCart;
+```text
+STRUCTURE ShoppingCart
 
-impl ShoppingCart {
-    pub fn new() -> Self {
-        ShoppingCart
-    }
+    FUNCTION NEW() → ShoppingCart
+        RETURN ShoppingCart
 
-    pub fn total(&self) -> f64 {
-        0.0
-    }
-}
+    FUNCTION TOTAL(self) → float
+        RETURN 0.0
 ```
 
 The test passes. Yes, `total()` is hardcoded to return 0.0. That is fine — the next test will force us to make it real.
@@ -77,37 +68,29 @@ The test passes. Yes, `total()` is hardcoded to return 0.0. That is fine — the
 
 **Red** — next test:
 
-```rust
-#[test]
-fn cart_with_one_item_returns_item_price() {
-    let mut cart = ShoppingCart::new();
-    cart.add_item("Widget", 9.99);
-    assert!((cart.total() - 9.99).abs() < f64::EPSILON);
-}
+```text
+TEST cart_with_one_item_returns_item_price
+    cart ← NEW ShoppingCart()
+    cart.ADD_ITEM("Widget", 9.99)
+    ASSERT |cart.TOTAL() - 9.99| < EPSILON
 ```
 
 Does not compile: `add_item` does not exist, and `ShoppingCart` is a unit struct with no fields.
 
 **Green** — extend the implementation:
 
-```rust
-pub struct ShoppingCart {
-    items: Vec<(String, f64)>,
-}
+```text
+STRUCTURE ShoppingCart
+    items: list of (name: string, price: float)
 
-impl ShoppingCart {
-    pub fn new() -> Self {
-        ShoppingCart { items: vec![] }
-    }
+    FUNCTION NEW() → ShoppingCart
+        RETURN ShoppingCart { items: empty list }
 
-    pub fn add_item(&mut self, name: &str, price: f64) {
-        self.items.push((name.to_string(), price));
-    }
+    FUNCTION ADD_ITEM(self, name: string, price: float)
+        APPEND (name, price) TO self.items
 
-    pub fn total(&self) -> f64 {
-        self.items.iter().map(|(_, price)| price).sum()
-    }
-}
+    FUNCTION TOTAL(self) → float
+        RETURN SUM OF price FOR EACH (_, price) IN self.items
 ```
 
 Both tests pass.
@@ -118,17 +101,15 @@ Both tests pass.
 
 **Red**:
 
-```rust
-#[test]
-fn cart_with_multiple_items_sums_prices() {
-    let mut cart = ShoppingCart::new();
-    cart.add_item("Widget", 9.99);
-    cart.add_item("Gadget", 24.99);
-    cart.add_item("Doohickey", 5.00);
+```text
+TEST cart_with_multiple_items_sums_prices
+    cart ← NEW ShoppingCart()
+    cart.ADD_ITEM("Widget", 9.99)
+    cart.ADD_ITEM("Gadget", 24.99)
+    cart.ADD_ITEM("Doohickey", 5.00)
 
-    let expected = 9.99 + 24.99 + 5.00;
-    assert!((cart.total() - expected).abs() < 0.001);
-}
+    expected ← 9.99 + 24.99 + 5.00
+    ASSERT |cart.TOTAL() - expected| < 0.001
 ```
 
 **Green** — this already passes with our current implementation. When a test passes immediately, it means either (a) the behavior was already covered, or (b) the test is not testing what you think. In this case, `iter().sum()` naturally handles multiple items. The test still has value as a regression guard.
@@ -137,68 +118,57 @@ fn cart_with_multiple_items_sums_prices() {
 
 **Red**:
 
-```rust
-#[test]
-fn removing_item_reduces_total() {
-    let mut cart = ShoppingCart::new();
-    cart.add_item("Widget", 9.99);
-    cart.add_item("Gadget", 24.99);
-    cart.remove_item("Widget");
+```text
+TEST removing_item_reduces_total
+    cart ← NEW ShoppingCart()
+    cart.ADD_ITEM("Widget", 9.99)
+    cart.ADD_ITEM("Gadget", 24.99)
+    cart.REMOVE_ITEM("Widget")
 
-    assert!((cart.total() - 24.99).abs() < f64::EPSILON);
-}
+    ASSERT |cart.TOTAL() - 24.99| < EPSILON
 ```
 
 **Green**:
 
-```rust
-pub fn remove_item(&mut self, name: &str) {
-    if let Some(pos) = self.items.iter().position(|(n, _)| n == name) {
-        self.items.remove(pos);
-    }
-}
+```text
+FUNCTION REMOVE_ITEM(self, name: string)
+    pos ← FIND INDEX in self.items WHERE item.name = name
+    IF pos IS found
+        REMOVE self.items[pos]
 ```
 
 ### Cycle 5: Applying a Discount
 
 **Red**:
 
-```rust
-#[test]
-fn discount_reduces_total_by_percentage() {
-    let mut cart = ShoppingCart::new();
-    cart.add_item("Widget", 100.0);
-    cart.apply_discount(20.0); // 20% off
+```text
+TEST discount_reduces_total_by_percentage
+    cart ← NEW ShoppingCart()
+    cart.ADD_ITEM("Widget", 100.0)
+    cart.APPLY_DISCOUNT(20.0)  // 20% off
 
-    assert!((cart.total() - 80.0).abs() < f64::EPSILON);
-}
+    ASSERT |cart.TOTAL() - 80.0| < EPSILON
 ```
 
 **Green**:
 
-```rust
-pub struct ShoppingCart {
-    items: Vec<(String, f64)>,
-    discount_percent: f64,
-}
+```text
+STRUCTURE ShoppingCart
+    items: list of (name: string, price: float)
+    discount_percent: float
 
-impl ShoppingCart {
-    pub fn new() -> Self {
-        ShoppingCart {
-            items: vec![],
-            discount_percent: 0.0,
+    FUNCTION NEW() → ShoppingCart
+        RETURN ShoppingCart {
+            items: empty list,
+            discount_percent: 0.0
         }
-    }
 
-    pub fn apply_discount(&mut self, percent: f64) {
-        self.discount_percent = percent;
-    }
+    FUNCTION APPLY_DISCOUNT(self, percent: float)
+        self.discount_percent ← percent
 
-    pub fn total(&self) -> f64 {
-        let subtotal: f64 = self.items.iter().map(|(_, price)| price).sum();
-        subtotal * (1.0 - self.discount_percent / 100.0)
-    }
-}
+    FUNCTION TOTAL(self) → float
+        subtotal ← SUM OF price FOR EACH (_, price) IN self.items
+        RETURN subtotal * (1.0 - self.discount_percent / 100.0)
 ```
 
 **Refactor** — all five tests pass. Notice how the design *emerged* from the tests. We did not plan the `discount_percent` field upfront; the test drove us to add it.
@@ -217,22 +187,18 @@ TDD's most universally applicable use case: when fixing a bug, write a test that
 
 Code that transforms one data format into another is naturally test-friendly. You know the input, you know the expected output. TDD here produces comprehensive test suites almost effortlessly.
 
-```rust
-#[test]
-fn parses_csv_line_into_record() {
-    let line = "Alice,30,alice@example.com";
-    let record = parse_csv_line(line).unwrap();
-    assert_eq!(record.name, "Alice");
-    assert_eq!(record.age, 30);
-    assert_eq!(record.email, "alice@example.com");
-}
+```text
+TEST parses_csv_line_into_record
+    line ← "Alice,30,alice@example.com"
+    record ← PARSE_CSV_LINE(line)
+    ASSERT record.name = "Alice"
+    ASSERT record.age = 30
+    ASSERT record.email = "alice@example.com"
 
-#[test]
-fn handles_quoted_fields_with_commas() {
-    let line = "\"Smith, Alice\",30,alice@example.com";
-    let record = parse_csv_line(line).unwrap();
-    assert_eq!(record.name, "Smith, Alice");
-}
+TEST handles_quoted_fields_with_commas
+    line ← "\"Smith, Alice\",30,alice@example.com"
+    record ← PARSE_CSV_LINE(line)
+    ASSERT record.name = "Smith, Alice"
 ```
 
 ### Algorithm Development

@@ -114,102 +114,79 @@ Invented by Alistair Cockburn in 2005. The core insight is revolutionary in its 
 
 ### Detailed Rust Example
 
-```rust
+```text
 // === DOMAIN (center of the hexagon) ===
 
 // Value objects
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Money {
-    pub amount_cents: i64,
-    pub currency: Currency,
-}
+STRUCTURE Money:
+    amount_cents ← integer
+    currency ← Currency
 
 // Entity / Aggregate root
-pub struct Order {
-    pub id: OrderId,
-    pub items: Vec<OrderItem>,
-    pub status: OrderStatus,
-}
+STRUCTURE Order:
+    id ← OrderId
+    items ← list of OrderItem
+    status ← OrderStatus
 
-impl Order {
-    pub fn new(items: Vec<OrderItem>) -> Result<Self, DomainError> {
-        if items.is_empty() {
-            return Err(DomainError::EmptyOrder);
-        }
-        Ok(Self {
-            id: OrderId::generate(),
-            items,
-            status: OrderStatus::Pending,
-        })
+PROCEDURE NEW_ORDER(items):
+    IF items IS empty THEN
+        RETURN Error(EmptyOrder)
+    RETURN Order {
+        id ← GENERATE_ORDER_ID(),
+        items ← items,
+        status ← Pending
     }
-}
 
-// === PORTS (traits defined in the domain) ===
+// === PORTS (interfaces defined in the domain) ===
 
 // Driven port: what the domain needs for persistence
-#[async_trait]
-pub trait OrderRepository: Send + Sync {
-    async fn save(&self, order: &Order) -> Result<(), DomainError>;
-    async fn find_by_id(&self, id: &OrderId) -> Result<Option<Order>, DomainError>;
-}
+INTERFACE OrderRepository:
+    PROCEDURE SAVE(order) → Result
+    PROCEDURE FIND_BY_ID(id) → optional Order
 
 // Driven port: what the domain needs for notifications
-#[async_trait]
-pub trait OrderNotifier: Send + Sync {
-    async fn notify_order_placed(&self, order: &Order) -> Result<(), DomainError>;
-}
+INTERFACE OrderNotifier:
+    PROCEDURE NOTIFY_ORDER_PLACED(order) → Result
 
 // Driving port: the use case the domain exposes
-#[async_trait]
-pub trait PlaceOrderUseCase: Send + Sync {
-    async fn place_order(&self, items: Vec<OrderItem>) -> Result<Order, DomainError>;
-}
+INTERFACE PlaceOrderUseCase:
+    PROCEDURE PLACE_ORDER(items) → Order or Error
 
 // === APPLICATION SERVICE (implements driving port, uses driven ports) ===
 
-pub struct OrderService<R: OrderRepository, N: OrderNotifier> {
-    repo: R,
-    notifier: N,
-}
+STRUCTURE OrderService:
+    repo ← OrderRepository
+    notifier ← OrderNotifier
 
-#[async_trait]
-impl<R: OrderRepository, N: OrderNotifier> PlaceOrderUseCase for OrderService<R, N> {
-    async fn place_order(&self, items: Vec<OrderItem>) -> Result<Order, DomainError> {
-        let order = Order::new(items)?;
-        self.repo.save(&order).await?;
-        self.notifier.notify_order_placed(&order).await?;
-        Ok(order)
-    }
-}
+IMPLEMENT PlaceOrderUseCase FOR OrderService:
+    PROCEDURE PLACE_ORDER(items):
+        order ← NEW_ORDER(items)
+        IF order IS error THEN RETURN error
+        AWAIT self.repo.SAVE(order)
+        AWAIT self.notifier.NOTIFY_ORDER_PLACED(order)
+        RETURN order
 
 // === ADAPTERS (outside the hexagon) ===
 
 // Driven adapter: PostgreSQL implementation
-struct PgOrderRepository { pool: PgPool }
+STRUCTURE PgOrderRepository:
+    pool ← PgPool
 
-#[async_trait]
-impl OrderRepository for PgOrderRepository {
-    async fn save(&self, order: &Order) -> Result<(), DomainError> {
-        sqlx::query("INSERT INTO orders ...").execute(&self.pool).await
-            .map_err(|e| DomainError::Persistence(e.to_string()))?;
-        Ok(())
-    }
+IMPLEMENT OrderRepository FOR PgOrderRepository:
+    PROCEDURE SAVE(order):
+        EXECUTE SQL "INSERT INTO orders ..." USING self.pool
+        IF error THEN RETURN Error(Persistence, error message)
     // ...
-}
 
 // Driven adapter: In-memory implementation (for tests)
-struct InMemoryOrderRepository {
-    orders: Arc<Mutex<HashMap<OrderId, Order>>>,
-}
+STRUCTURE InMemoryOrderRepository:
+    orders ← shared map of OrderId → Order
 
 // Driving adapter: HTTP handler
-async fn place_order_handler(
-    State(service): State<Arc<dyn PlaceOrderUseCase>>,
-    Json(req): Json<PlaceOrderRequest>,
-) -> Result<Json<OrderResponse>, ApiError> {
-    let order = service.place_order(req.into_items()).await?;
-    Ok(Json(order.into()))
-}
+PROCEDURE PLACE_ORDER_HANDLER(service, request):
+    order ← AWAIT service.PLACE_ORDER(request.items)
+    IF order IS error THEN RETURN ApiError
+    RETURN JSON(order)
 ```
 
 ### Real-World Examples

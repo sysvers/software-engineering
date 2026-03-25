@@ -135,118 +135,79 @@ tokio = { version = "1", features = ["full"] }
 tonic-build = "0.12"
 ```
 
-```rust
+```text
 // build.rs
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tonic_build::compile_protos("proto/order.proto")?;
-    Ok(())
-}
+PROCEDURE MAIN():
+    COMPILE_PROTOS("proto/order.proto")
 ```
 
 ### Server implementation
 
-```rust
-use tonic::{Request, Response, Status};
-use order::order_service_server::{OrderService, OrderServiceServer};
-use order::{CreateOrderRequest, GetOrderRequest, ListOrdersRequest, Order};
+```text
+// Include generated protobuf code for "order" package
 
-pub mod order {
-    tonic::include_proto!("order");
-}
+STRUCTURE MyOrderService:
+    db ← shared reference to Database
 
-#[derive(Default)]
-pub struct MyOrderService {
-    db: Arc<Database>,
-}
+IMPLEMENT OrderService FOR MyOrderService:
 
-#[tonic::async_trait]
-impl OrderService for MyOrderService {
-    async fn create_order(
-        &self,
-        request: Request<CreateOrderRequest>,
-    ) -> Result<Response<Order>, Status> {
-        let req = request.into_inner();
+    PROCEDURE CREATE_ORDER(request):
+        req ← EXTRACT inner data FROM request
 
-        if req.items.is_empty() {
-            return Err(Status::invalid_argument("Order must have at least one item"));
-        }
+        IF req.items IS empty THEN
+            RETURN Error("Order must have at least one item")
 
-        let order = self.db.create_order(&req.user_id, &req.items)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to create order: {e}")))?;
+        order ← AWAIT self.db.CREATE_ORDER(req.user_id, req.items)
+        IF order FAILED THEN
+            RETURN Error("Failed to create order: " + error message)
 
-        Ok(Response::new(order))
-    }
+        RETURN Response(order)
 
-    async fn get_order(
-        &self,
-        request: Request<GetOrderRequest>,
-    ) -> Result<Response<Order>, Status> {
-        let id = &request.into_inner().id;
+    PROCEDURE GET_ORDER(request):
+        id ← EXTRACT inner data FROM request, GET id
 
-        self.db.get_order(id)
-            .await
-            .map(Response::new)
-            .ok_or_else(|| Status::not_found(format!("Order {id} not found")))
-    }
+        result ← AWAIT self.db.GET_ORDER(id)
+        IF result IS present THEN
+            RETURN Response(result)
+        ELSE
+            RETURN Error("Order {id} not found")
 
     // Server streaming: returns a stream of orders
-    type ListOrdersStream = ReceiverStream<Result<Order, Status>>;
+    PROCEDURE LIST_ORDERS(request):
+        req ← EXTRACT inner data FROM request
+        CREATE channel (sender, receiver) with buffer size 32
+        db ← CLONE self.db
 
-    async fn list_orders(
-        &self,
-        request: Request<ListOrdersRequest>,
-    ) -> Result<Response<Self::ListOrdersStream>, Status> {
-        let req = request.into_inner();
-        let (tx, rx) = tokio::sync::mpsc::channel(32);
-        let db = self.db.clone();
+        SPAWN async task:
+            orders ← AWAIT db.LIST_ORDERS_FOR_USER(req.user_id)
+            FOR EACH order IN orders:
+                IF SEND(order) TO sender FAILS THEN
+                    BREAK  // Client disconnected
 
-        tokio::spawn(async move {
-            let orders = db.list_orders_for_user(&req.user_id).await;
-            for order in orders {
-                if tx.send(Ok(order)).await.is_err() {
-                    break; // Client disconnected
-                }
-            }
-        });
+        RETURN Response(stream FROM receiver)
 
-        Ok(Response::new(ReceiverStream::new(rx)))
-    }
-}
+PROCEDURE MAIN():
+    addr ← "[::1]:50051"
+    service ← NEW MyOrderService (default)
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:50051".parse()?;
-    let service = MyOrderService::default();
-
-    tonic::transport::Server::builder()
-        .add_service(OrderServiceServer::new(service))
-        .serve(addr)
-        .await?;
-
-    Ok(())
-}
+    BUILD gRPC Server
+        ADD OrderServiceServer(service)
+        SERVE at addr
 ```
 
 ### Client usage
 
-```rust
-use order::order_service_client::OrderServiceClient;
-use order::CreateOrderRequest;
+```text
+PROCEDURE MAIN():
+    client ← AWAIT CONNECT OrderServiceClient TO "http://[::1]:50051"
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = OrderServiceClient::connect("http://[::1]:50051").await?;
+    request ← NEW CreateOrderRequest {
+        user_id ← "user_123",
+        items ← [...]
+    }
 
-    let request = tonic::Request::new(CreateOrderRequest {
-        user_id: "user_123".into(),
-        items: vec![/* ... */],
-    });
-
-    let response = client.create_order(request).await?;
-    println!("Created order: {:?}", response.into_inner());
-    Ok(())
-}
+    response ← AWAIT client.CREATE_ORDER(request)
+    PRINT "Created order:", response
 ```
 
 ## When to Use gRPC

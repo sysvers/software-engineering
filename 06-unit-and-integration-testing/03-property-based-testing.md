@@ -14,39 +14,27 @@ An example-based test says: "sorting `[3, 1, 2]` should produce `[1, 2, 3]`."
 
 A property-based test says: "for *any* input list, the sorted output should be (1) the same length, (2) in non-decreasing order, and (3) a permutation of the input."
 
-```rust
+```text
 // Example-based: specific case
-#[test]
-fn sort_works_for_specific_input() {
-    assert_eq!(sort(vec![3, 1, 2]), vec![1, 2, 3]);
-}
+TEST sort_works_for_specific_input
+    ASSERT SORT([3, 1, 2]) = [1, 2, 3]
 
 // Property-based: any input
-use proptest::prelude::*;
+PROPERTY TESTS:
 
-proptest! {
-    #[test]
-    fn sorted_output_has_same_length(input: Vec<i32>) {
-        let sorted = sort(input.clone());
-        assert_eq!(sorted.len(), input.len());
-    }
+    TEST sorted_output_has_same_length(input: list of integers)
+        sorted ← SORT(CLONE(input))
+        ASSERT sorted.length = input.length
 
-    #[test]
-    fn sorted_output_is_ordered(input: Vec<i32>) {
-        let sorted = sort(input);
-        for window in sorted.windows(2) {
-            assert!(window[0] <= window[1]);
-        }
-    }
+    TEST sorted_output_is_ordered(input: list of integers)
+        sorted ← SORT(input)
+        FOR EACH consecutive pair (a, b) IN sorted
+            ASSERT a ≤ b
 
-    #[test]
-    fn sorted_output_contains_same_elements(input: Vec<i32>) {
-        let mut sorted = sort(input.clone());
-        let mut original = input;
-        original.sort();
-        assert_eq!(sorted, original);
-    }
-}
+    TEST sorted_output_contains_same_elements(input: list of integers)
+        sorted ← SORT(CLONE(input))
+        original ← SORT(input)
+        ASSERT sorted = original
 ```
 
 The property-based tests will exercise empty vectors, single-element vectors, already-sorted vectors, reverse-sorted vectors, vectors with duplicates, vectors with `i32::MIN` and `i32::MAX`, and thousands of other cases you would never write by hand.
@@ -66,110 +54,74 @@ proptest = "1"
 
 The `proptest!` macro generates test cases from strategies. Built-in strategies exist for all primitive types, `String`, `Vec<T>`, `Option<T>`, `Result<T, E>`, and tuples.
 
-```rust
-use proptest::prelude::*;
+```text
+PROPERTY TESTS:
 
-proptest! {
-    #[test]
-    fn addition_is_commutative(a: i64, b: i64) {
-        assert_eq!(a.wrapping_add(b), b.wrapping_add(a));
-    }
+    TEST addition_is_commutative(a: integer, b: integer)
+        ASSERT WRAPPING_ADD(a, b) = WRAPPING_ADD(b, a)
 
-    #[test]
-    fn string_roundtrips_through_uppercase(s: String) {
+    TEST string_roundtrips_through_uppercase(s: string)
         // A property: uppercasing and lowercasing back should preserve length
-        assert_eq!(s.to_uppercase().len() >= s.len(), true);
-    }
-}
+        ASSERT UPPERCASE(s).length ≥ s.length
 ```
 
 ### Custom Strategies
 
 When built-in strategies generate inputs that are too broad, narrow them with custom strategies:
 
-```rust
-use proptest::prelude::*;
-
+```text
 // Generate valid email-like strings
-fn email_strategy() -> impl Strategy<Value = String> {
-    ("[a-z]{1,10}@[a-z]{1,10}\\.[a-z]{2,4}").boxed()
-}
+STRATEGY EMAIL_STRATEGY() → string matching "[a-z]{1,10}@[a-z]{1,10}.[a-z]{2,4}"
 
 // Generate prices in a realistic range
-fn price_strategy() -> impl Strategy<Value = f64> {
-    (0.01f64..10_000.0)
-}
+STRATEGY PRICE_STRATEGY() → float in range 0.01 to 10000.0
 
 // Generate vectors with constrained length
-fn short_vec_strategy() -> impl Strategy<Value = Vec<i32>> {
-    prop::collection::vec(any::<i32>(), 0..100)
-}
+STRATEGY SHORT_VEC_STRATEGY() → list of integers with length 0 to 100
 
-proptest! {
-    #[test]
-    fn discount_never_produces_negative_price(
-        price in price_strategy(),
-        discount in 0.0f64..100.0,
-    ) {
-        let result = calculate_discount(price, discount);
-        assert!(result >= 0.0, "Negative price: {} with {}% discount = {}", price, discount, result);
-    }
-}
+PROPERTY TESTS:
+
+    TEST discount_never_produces_negative_price(
+        price FROM PRICE_STRATEGY,
+        discount FROM range 0.0 to 100.0
+    )
+        result ← CALCULATE_DISCOUNT(price, discount)
+        ASSERT result ≥ 0.0, "Negative price: " + price + " with " + discount + "% discount = " + result
 ```
 
 ### Composing Strategies
 
 Build complex test data from simpler strategies:
 
-```rust
-use proptest::prelude::*;
+```text
+STRUCTURE Order
+    customer_id: unsigned integer
+    items: list of OrderItem
+    coupon_code: optional string
 
-#[derive(Debug, Clone)]
-struct Order {
-    customer_id: u64,
-    items: Vec<OrderItem>,
-    coupon_code: Option<String>,
-}
+STRUCTURE OrderItem
+    name: string
+    price: float
+    quantity: unsigned integer
 
-#[derive(Debug, Clone)]
-struct OrderItem {
-    name: String,
-    price: f64,
-    quantity: u32,
-}
+STRATEGY ORDER_ITEM_STRATEGY() → OrderItem
+    name FROM random string matching "[a-zA-Z ]{1,50}"
+    price FROM range 0.01 to 1000.0
+    quantity FROM range 1 to 100
+    RETURN OrderItem { name, price, quantity }
 
-fn order_item_strategy() -> impl Strategy<Value = OrderItem> {
-    (
-        "[a-zA-Z ]{1,50}",       // name
-        0.01f64..1000.0,          // price
-        1u32..100,                // quantity
-    )
-        .prop_map(|(name, price, quantity)| OrderItem { name, price, quantity })
-}
+STRATEGY ORDER_STRATEGY() → Order
+    customer_id FROM range 1 to 1000000
+    items FROM list of ORDER_ITEM_STRATEGY, length 1 to 20
+    coupon_code FROM optional string matching "[A-Z]{4,8}"
+    RETURN Order { customer_id, items, coupon_code }
 
-fn order_strategy() -> impl Strategy<Value = Order> {
-    (
-        1u64..1_000_000,                              // customer_id
-        prop::collection::vec(order_item_strategy(), 1..20),  // 1-20 items
-        prop::option::of("[A-Z]{4,8}"),               // optional coupon
-    )
-        .prop_map(|(customer_id, items, coupon_code)| Order {
-            customer_id,
-            items,
-            coupon_code,
-        })
-}
+PROPERTY TESTS:
 
-proptest! {
-    #[test]
-    fn order_total_is_sum_of_item_totals(order in order_strategy()) {
-        let expected: f64 = order.items.iter()
-            .map(|item| item.price * item.quantity as f64)
-            .sum();
-        let actual = calculate_order_total(&order);
-        assert!((actual - expected).abs() < 0.01);
-    }
-}
+    TEST order_total_is_sum_of_item_totals(order FROM ORDER_STRATEGY)
+        expected ← SUM OF (item.price * item.quantity) FOR EACH item IN order.items
+        actual ← CALCULATE_ORDER_TOTAL(order)
+        ASSERT |actual - expected| < 0.01
 ```
 
 ## Shrinking: Finding Minimal Failing Cases
@@ -178,16 +130,14 @@ When proptest finds a failing input, it does not just report the random input th
 
 For example, if your sort function fails on a vector of 47 elements, proptest will shrink it down to a 2-element vector that demonstrates the same bug. Instead of debugging with 47 elements, you debug with 2.
 
-```rust
-proptest! {
-    #[test]
-    fn buggy_dedup_preserves_all_unique_elements(input: Vec<i32>) {
-        let deduped = buggy_dedup(input.clone());
-        let unique: HashSet<i32> = input.iter().copied().collect();
+```text
+PROPERTY TESTS:
+
+    TEST buggy_dedup_preserves_all_unique_elements(input: list of integers)
+        deduped ← BUGGY_DEDUP(CLONE(input))
+        unique ← SET of all elements in input
         // If this fails on [1, 2, 1, 3, 2], proptest might shrink to [0, 0]
-        assert_eq!(deduped.len(), unique.len());
-    }
-}
+        ASSERT deduped.length = unique.size
 ```
 
 Proptest's shrinking output looks like:
@@ -209,72 +159,63 @@ Proptest saves failing cases to a file (`.proptest-regressions/`) so they are re
 
 One of the most common classes of bugs found by property testing: a value that does not survive serialization and deserialization.
 
-```rust
-proptest! {
-    #[test]
-    fn json_roundtrip_preserves_data(
-        name in "[a-zA-Z ]{1,100}",
-        age in 0u32..200,
-        score in any::<f64>(),
-    ) {
-        let original = UserProfile { name: name.clone(), age, score };
-        let json = serde_json::to_string(&original).unwrap();
-        let deserialized: UserProfile = serde_json::from_str(&json).unwrap();
-        assert_eq!(original.name, deserialized.name);
-        assert_eq!(original.age, deserialized.age);
+```text
+PROPERTY TESTS:
+
+    TEST json_roundtrip_preserves_data(
+        name FROM "[a-zA-Z ]{1,100}",
+        age FROM range 0 to 200,
+        score FROM any float
+    )
+        original ← UserProfile { name, age, score }
+        json ← JSON_SERIALIZE(original)
+        deserialized ← JSON_DESERIALIZE(json) as UserProfile
+        ASSERT original.name = deserialized.name
+        ASSERT original.age = deserialized.age
         // NaN != NaN, so special handling needed
-        if original.score.is_nan() {
-            assert!(deserialized.score.is_nan());
-        } else {
-            assert!((original.score - deserialized.score).abs() < f64::EPSILON);
-        }
-    }
-}
+        IF original.score IS NaN
+            ASSERT deserialized.score IS NaN
+        ELSE
+            ASSERT |original.score - deserialized.score| < EPSILON
 ```
 
 This test commonly finds bugs with special float values (NaN, infinity), Unicode edge cases in strings, and off-by-one errors in custom serialization.
 
 ### Encoder/Decoder Symmetry
 
-```rust
-proptest! {
-    #[test]
-    fn base64_roundtrip(data: Vec<u8>) {
-        let encoded = base64_encode(&data);
-        let decoded = base64_decode(&encoded).unwrap();
-        assert_eq!(data, decoded);
-    }
-}
+```text
+PROPERTY TESTS:
+
+    TEST base64_roundtrip(data: list of bytes)
+        encoded ← BASE64_ENCODE(data)
+        decoded ← BASE64_DECODE(encoded)
+        ASSERT data = decoded
 ```
 
 A real bug found by this pattern: a base64 encoder that failed on inputs whose length was not a multiple of 3, producing incorrect padding.
 
 ### Arithmetic Overflow
 
-```rust
-proptest! {
-    #[test]
-    fn total_price_does_not_overflow(
-        prices in prop::collection::vec(0.01f64..1_000_000.0, 0..1000),
-    ) {
-        let total = compute_total(&prices);
-        assert!(total.is_finite(), "Overflow: total = {}", total);
-        assert!(total >= 0.0);
-    }
-}
+```text
+PROPERTY TESTS:
+
+    TEST total_price_does_not_overflow(
+        prices FROM list of floats in range 0.01 to 1000000.0, length 0 to 1000
+    )
+        total ← COMPUTE_TOTAL(prices)
+        ASSERT total IS finite, "Overflow: total = " + total
+        ASSERT total ≥ 0.0
 ```
 
 ### Idempotency
 
-```rust
-proptest! {
-    #[test]
-    fn formatting_is_idempotent(input in "[a-zA-Z0-9 .,!?]{0,200}") {
-        let once = normalize_whitespace(&input);
-        let twice = normalize_whitespace(&once);
-        assert_eq!(once, twice, "Formatting is not idempotent");
-    }
-}
+```text
+PROPERTY TESTS:
+
+    TEST formatting_is_idempotent(input FROM "[a-zA-Z0-9 .,!?]{0,200}")
+        once ← NORMALIZE_WHITESPACE(input)
+        twice ← NORMALIZE_WHITESPACE(once)
+        ASSERT once = twice, "Formatting is not idempotent"
 ```
 
 This found a bug where normalizing whitespace turned double spaces into single spaces but also converted tabs into double spaces, meaning a second pass would change the output again.
@@ -295,15 +236,13 @@ After any operation, certain invariants must hold. A sorted list stays sorted af
 
 Your optimized implementation should produce the same results as a simple (correct but slow) reference implementation.
 
-```rust
-proptest! {
-    #[test]
-    fn fast_median_matches_naive_median(input in prop::collection::vec(any::<f64>(), 1..1000)) {
-        let fast = fast_median(&input);
-        let naive = naive_median(&input);
-        assert!((fast - naive).abs() < 0.001);
-    }
-}
+```text
+PROPERTY TESTS:
+
+    TEST fast_median_matches_naive_median(input FROM list of floats, length 1 to 1000)
+        fast ← FAST_MEDIAN(input)
+        naive ← NAIVE_MEDIAN(input)
+        ASSERT |fast - naive| < 0.001
 ```
 
 ### Commutativity, Associativity, Distributivity
@@ -314,13 +253,11 @@ Mathematical properties that your operations should satisfy, if applicable.
 
 The weakest but still useful property: the function does not panic for any valid input.
 
-```rust
-proptest! {
-    #[test]
-    fn parse_never_panics(input: String) {
-        let _ = parse_config(&input);  // May return Err, but should never panic
-    }
-}
+```text
+PROPERTY TESTS:
+
+    TEST parse_never_panics(input: string)
+        CALL PARSE_CONFIG(input)  // May return Err, but should never panic
 ```
 
 ## Practical Considerations
@@ -329,30 +266,24 @@ proptest! {
 
 Property-based tests are slower than example-based tests because they run many iterations (default: 256 cases per test). For expensive operations, reduce the case count:
 
-```rust
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(50))]
+```text
+PROPERTY TESTS (config: 50 cases instead of default 256):
 
-    #[test]
-    fn expensive_operation_property(input: Vec<i32>) {
+    TEST expensive_operation_property(input: list of integers)
         // Only 50 cases instead of 256
-        let result = expensive_operation(&input);
-        assert!(result.is_valid());
-    }
-}
+        result ← EXPENSIVE_OPERATION(input)
+        ASSERT result.IS_VALID()
 ```
 
 ### Debugging Failures
 
 When a property test fails, proptest prints the minimal failing input. Reproduce it with a targeted example-based test:
 
-```rust
+```text
 // proptest found: input = [0, 0]
-#[test]
-fn regression_dedup_with_duplicates() {
-    let result = buggy_dedup(vec![0, 0]);
-    assert_eq!(result, vec![0]);
-}
+TEST regression_dedup_with_duplicates
+    result ← BUGGY_DEDUP([0, 0])
+    ASSERT result = [0]
 ```
 
 This example-based regression test is faster to run and easier to debug than the property test.

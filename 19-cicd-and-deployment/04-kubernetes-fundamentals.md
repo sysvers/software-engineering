@@ -148,101 +148,63 @@ Kubernetes uses health probes to determine pod state:
 - **Liveness probe:** "Is the process alive?" Failure triggers a pod restart.
 - **Readiness probe:** "Should the load balancer send traffic here?" Failure removes the pod from the Service.
 
-```rust
-use axum::{routing::get, Json, Router};
-use serde::Serialize;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+```text
+STRUCTURE AppState:
+    ready ← shared read-write boolean
 
-#[derive(Clone)]
-struct AppState {
-    ready: Arc<RwLock<bool>>,
-}
-
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    version: &'static str,
-}
+STRUCTURE HealthResponse:
+    status ← string
+    version ← string
 
 /// Liveness: returns 200 as long as the server can respond.
-async fn liveness() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "alive",
-        version: env!("CARGO_PKG_VERSION"),
-    })
-}
+PROCEDURE LIVENESS():
+    RETURN JSON { status ← "alive", version ← PACKAGE_VERSION }
 
 /// Readiness: returns 503 during shutdown so the load balancer
 /// drains traffic before the pod terminates.
-async fn readiness(
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> (axum::http::StatusCode, Json<HealthResponse>) {
-    let ready = *state.ready.read().await;
-    let code = if ready {
-        axum::http::StatusCode::OK
-    } else {
-        axum::http::StatusCode::SERVICE_UNAVAILABLE
-    };
-    (code, Json(HealthResponse {
-        status: if ready { "ready" } else { "shutting_down" },
-        version: env!("CARGO_PKG_VERSION"),
-    }))
-}
+PROCEDURE READINESS(state):
+    ready ← AWAIT READ state.ready
+    IF ready THEN
+        code ← 200 OK
+    ELSE
+        code ← 503 SERVICE UNAVAILABLE
+
+    RETURN (code, JSON {
+        status ← IF ready THEN "ready" ELSE "shutting_down",
+        version ← PACKAGE_VERSION
+    })
 ```
 
 ## Graceful Shutdown in Rust (axum + tokio)
 
 During a rolling deployment, Kubernetes sends `SIGTERM` to the old pod. The pod must finish in-flight requests before exiting. Without graceful shutdown, users see failed requests.
 
-```rust
-use std::sync::Arc;
-use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+```text
+PROCEDURE MAIN():
+    state ← AppState { ready ← shared(true) }
 
-#[tokio::main]
-async fn main() {
-    let state = AppState {
-        ready: Arc::new(RwLock::new(true)),
-    };
-
-    let app = Router::new()
-        .route("/healthz", get(liveness))
-        .route("/ready", get(readiness))
+    app ← NEW Router
+        REGISTER "/healthz" with GET → LIVENESS
+        REGISTER "/ready" with GET → READINESS
         // ... application routes ...
-        .with_state(state.clone());
+        SET state
 
-    let listener = TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    listener ← AWAIT BIND("0.0.0.0:8080")
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(state))
-        .await
-        .unwrap();
-}
+    AWAIT SERVE(listener, app)
+        WITH graceful shutdown ← SHUTDOWN_SIGNAL(state)
 
-async fn shutdown_signal(state: AppState) {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("failed to listen for ctrl+c");
-    };
-    let sigterm = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to listen for SIGTERM")
-            .recv()
-            .await;
-    };
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = sigterm => {},
-    }
+PROCEDURE SHUTDOWN_SIGNAL(state):
+    WAIT FOR EITHER:
+        - CTRL+C signal
+        - SIGTERM signal
 
     // Mark not-ready so readiness probe fails and Kubernetes
     // stops sending new traffic to this pod.
-    *state.ready.write().await = false;
+    AWAIT WRITE state.ready ← false
 
     // Give the load balancer time to notice the failing probe.
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-}
+    SLEEP 5 seconds
 ```
 
 **Shutdown sequence during a rolling deployment:**

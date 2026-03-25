@@ -36,131 +36,71 @@ SLOs are not aspirational -- they are precise engineering targets that drive ope
 
 The following example shows how to track multiple SLOs for a service, record request outcomes, and determine whether each objective is currently being met:
 
-```rust
-use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+```text
+STRUCTURE SloDefinition
+    name : String
+    target : Float             // e.g., 0.999 for 99.9%
+    window : Duration          // rolling measurement window
 
-/// A single SLO definition with its measurement window and target.
-struct SloDefinition {
-    name: String,
-    target: f64,           // e.g., 0.999 for 99.9%
-    window: Duration,      // rolling measurement window
-}
-
-/// A timestamped request outcome used for windowed SLO calculation.
-struct RequestOutcome {
-    timestamp: SystemTime,
-    success: bool,
-    latency: Duration,
-}
+STRUCTURE RequestOutcome
+    timestamp : Timestamp
+    success : Boolean
+    latency : Duration
 
 /// Tracks multiple SLOs for a service and computes real-time compliance.
-struct SloTracker {
-    definitions: Vec<SloDefinition>,
-    outcomes: Vec<RequestOutcome>,
-}
+STRUCTURE SloTracker
+    definitions : List<SloDefinition>
+    outcomes : List<RequestOutcome>
 
-#[derive(Debug)]
-struct SloStatus {
-    name: String,
-    target: f64,
-    actual: f64,
-    compliant: bool,
-    error_budget_remaining: f64, // fraction of budget left (0.0 to 1.0)
-    total_in_window: usize,
-    failures_in_window: usize,
-}
+STRUCTURE SloStatus
+    name : String
+    target, actual : Float
+    compliant : Boolean
+    error_budget_remaining : Float      // fraction of budget left (0.0 to 1.0)
+    total_in_window, failures_in_window : Integer
 
-impl SloTracker {
-    fn new(definitions: Vec<SloDefinition>) -> Self {
-        Self {
-            definitions,
-            outcomes: Vec::new(),
-        }
-    }
+PROCEDURE SloTracker.RECORD(success, latency)
+    APPEND RequestOutcome { timestamp ← NOW(), success, latency } TO self.outcomes
 
-    fn record(&mut self, success: bool, latency: Duration) {
-        self.outcomes.push(RequestOutcome {
-            timestamp: SystemTime::now(),
-            success,
-            latency,
-        });
-    }
+/// Evaluate all SLOs against the current window of request data.
+PROCEDURE SloTracker.EVALUATE(now) → List<SloStatus>
+    results ← EMPTY LIST
+    FOR EACH slo IN self.definitions DO
+        cutoff ← now - slo.window
+        windowed ← FILTER self.outcomes WHERE timestamp ≥ cutoff
 
-    /// Evaluate all SLOs against the current window of request data.
-    fn evaluate(&self, now: SystemTime) -> Vec<SloStatus> {
-        self.definitions
-            .iter()
-            .map(|slo| {
-                let cutoff = now - slo.window;
-                let windowed: Vec<&RequestOutcome> = self
-                    .outcomes
-                    .iter()
-                    .filter(|o| o.timestamp >= cutoff)
-                    .collect();
+        total ← LENGTH(windowed)
+        failures ← COUNT windowed WHERE success = FALSE
+        actual ← IF total = 0 THEN 1.0 ELSE 1.0 - (failures / total)
 
-                let total = windowed.len();
-                let failures = windowed.iter().filter(|o| !o.success).count();
-                let actual = if total == 0 {
-                    1.0
-                } else {
-                    1.0 - (failures as f64 / total as f64)
-                };
+        budget_fraction ← 1.0 - slo.target
+        allowed_failures ← FLOOR(total * budget_fraction)
+        budget_remaining ← IF allowed_failures = 0 THEN
+                               (IF failures = 0 THEN 1.0 ELSE 0.0)
+                           ELSE
+                               1.0 - (failures / allowed_failures)
 
-                let budget_fraction = 1.0 - slo.target; // e.g., 0.001 for 99.9%
-                let allowed_failures = (total as f64 * budget_fraction).floor() as usize;
-                let budget_remaining = if allowed_failures == 0 {
-                    if failures == 0 { 1.0 } else { 0.0 }
-                } else {
-                    1.0 - (failures as f64 / allowed_failures as f64)
-                };
+        APPEND SloStatus {
+            name ← slo.name, target ← slo.target, actual ← actual,
+            compliant ← (actual ≥ slo.target),
+            error_budget_remaining ← MAX(budget_remaining, 0.0),
+            total_in_window ← total, failures_in_window ← failures
+        } TO results
+    END FOR
+    RETURN results
 
-                SloStatus {
-                    name: slo.name.clone(),
-                    target: slo.target,
-                    actual,
-                    compliant: actual >= slo.target,
-                    error_budget_remaining: budget_remaining.max(0.0),
-                    total_in_window: total,
-                    failures_in_window: failures,
-                }
-            })
-            .collect()
-    }
+PROCEDURE MAIN()
+    tracker ← NEW SloTracker([
+        SloDefinition { name ← "availability", target ← 0.999, window ← 30 days },
+        SloDefinition { name ← "latency-p99-under-200ms", target ← 0.99, window ← 7 days }
+    ])
 
-    /// Returns true if any SLO has exhausted its error budget.
-    fn any_budget_exhausted(&self, now: SystemTime) -> bool {
-        self.evaluate(now)
-            .iter()
-            .any(|s| s.error_budget_remaining <= 0.0)
-    }
-}
-
-fn main() {
-    let tracker = SloTracker::new(vec![
-        SloDefinition {
-            name: "availability".into(),
-            target: 0.999,
-            window: Duration::from_secs(30 * 24 * 3600),
-        },
-        SloDefinition {
-            name: "latency-p99-under-200ms".into(),
-            target: 0.99,
-            window: Duration::from_secs(7 * 24 * 3600),
-        },
-    ]);
-
-    for status in tracker.evaluate(SystemTime::now()) {
-        println!(
-            "SLO '{}': actual={:.4}%, target={:.4}%, compliant={}, budget_remaining={:.1}%",
-            status.name,
-            status.actual * 100.0,
-            status.target * 100.0,
-            status.compliant,
-            status.error_budget_remaining * 100.0,
-        );
-    }
-}
+    FOR EACH status IN tracker.EVALUATE(NOW()) DO
+        PRINT "SLO '" + status.name + "': actual=" + (status.actual * 100) + "%"
+              + ", target=" + (status.target * 100) + "%"
+              + ", compliant=" + status.compliant
+              + ", budget_remaining=" + (status.error_budget_remaining * 100) + "%"
+    END FOR
 ```
 
 ### Error Budgets
@@ -169,69 +109,51 @@ The error budget is the inverse of an SLO. If your SLO is 99.9% availability, yo
 
 When the error budget is healthy, teams can push risky deployments, run experiments, and take on technical debt. When the budget is exhausted, the team shifts focus to reliability work. This creates an objective, data-driven mechanism for balancing feature velocity against stability.
 
-```rust
+```text
 /// Represents an error budget tracker for a service.
-struct ErrorBudget {
-    slo_target: f64,           // e.g., 0.999 for 99.9%
-    window_seconds: u64,       // e.g., 2_592_000 for 30 days
-    total_requests: u64,
-    failed_requests: u64,
-}
+STRUCTURE ErrorBudget
+    slo_target : Float             // e.g., 0.999 for 99.9%
+    window_seconds : Integer       // e.g., 2592000 for 30 days
+    total_requests : Integer ← 0
+    failed_requests : Integer ← 0
 
-impl ErrorBudget {
-    fn new(slo_target: f64, window_seconds: u64) -> Self {
-        Self {
-            slo_target,
-            window_seconds,
-            total_requests: 0,
-            failed_requests: 0,
-        }
-    }
+PROCEDURE ErrorBudget.ALLOWED_FAILURES() → Integer
+    budget_fraction ← 1.0 - self.slo_target
+    RETURN FLOOR(self.total_requests * budget_fraction)
 
-    /// Returns the allowed failure count given total requests.
-    fn allowed_failures(&self) -> u64 {
-        let budget_fraction = 1.0 - self.slo_target;
-        (self.total_requests as f64 * budget_fraction).floor() as u64
-    }
+/// Returns the remaining error budget as a fraction (0.0 to 1.0).
+/// Values below 0.0 indicate budget exhaustion.
+PROCEDURE ErrorBudget.REMAINING_FRACTION() → Float
+    allowed ← self.ALLOWED_FAILURES()
+    IF allowed = 0 THEN
+        RETURN IF self.failed_requests = 0 THEN 1.0 ELSE -1.0
+    END IF
+    RETURN 1.0 - (self.failed_requests / allowed)
 
-    /// Returns the remaining error budget as a fraction (0.0 to 1.0).
-    /// Values below 0.0 indicate budget exhaustion.
-    fn remaining_fraction(&self) -> f64 {
-        let allowed = self.allowed_failures();
-        if allowed == 0 {
-            return if self.failed_requests == 0 { 1.0 } else { -1.0 };
-        }
-        1.0 - (self.failed_requests as f64 / allowed as f64)
-    }
+PROCEDURE ErrorBudget.RECORD(success)
+    self.total_requests ← self.total_requests + 1
+    IF NOT success THEN
+        self.failed_requests ← self.failed_requests + 1
+    END IF
 
-    fn record(&mut self, success: bool) {
-        self.total_requests += 1;
-        if !success {
-            self.failed_requests += 1;
-        }
-    }
+/// Returns true if the team should freeze deployments and focus on reliability.
+PROCEDURE ErrorBudget.SHOULD_FREEZE_DEPLOYMENTS() → Boolean
+    RETURN self.REMAINING_FRACTION() < 0.0
 
-    /// Returns true if the team should freeze deployments and focus on reliability.
-    fn should_freeze_deployments(&self) -> bool {
-        self.remaining_fraction() < 0.0
-    }
-}
-
-fn main() {
-    let mut budget = ErrorBudget::new(0.999, 30 * 24 * 3600);
+PROCEDURE MAIN()
+    budget ← NEW ErrorBudget(slo_target ← 0.999, window_seconds ← 30 * 24 * 3600)
 
     // Simulate 1,000,000 requests with 1,200 failures
-    budget.total_requests = 1_000_000;
-    budget.failed_requests = 1_200;
+    budget.total_requests ← 1000000
+    budget.failed_requests ← 1200
 
-    println!("Allowed failures: {}", budget.allowed_failures());
-    println!("Remaining budget: {:.2}%", budget.remaining_fraction() * 100.0);
-    println!("Freeze deployments: {}", budget.should_freeze_deployments());
+    PRINT "Allowed failures: " + budget.ALLOWED_FAILURES()
+    PRINT "Remaining budget: " + (budget.REMAINING_FRACTION() * 100) + "%"
+    PRINT "Freeze deployments: " + budget.SHOULD_FREEZE_DEPLOYMENTS()
     // Output:
     // Allowed failures: 1000
     // Remaining budget: -20.00%
     // Freeze deployments: true
-}
 ```
 
 ### Capacity Planning
@@ -255,198 +177,113 @@ Incident response is a structured process for detecting, mitigating, and resolvi
 - **Mitigation**: Prioritizing stopping the bleeding over finding root cause. Roll back, redirect traffic, scale up -- whatever restores service fastest.
 - **Resolution**: Fixing the underlying problem after the immediate impact is mitigated.
 
-```rust
-use std::time::SystemTime;
+```text
+ENUMERATION Severity
+    Sev1    // Critical: major user-facing impact, data loss risk
+    Sev2    // High: significant degradation, partial outage
+    Sev3    // Medium: minor user impact, workaround available
+    Sev4    // Low: no user impact, internal tooling issue
 
-#[derive(Debug, Clone, PartialEq)]
-enum Severity {
-    Sev1, // Critical: major user-facing impact, data loss risk
-    Sev2, // High: significant degradation, partial outage
-    Sev3, // Medium: minor user impact, workaround available
-    Sev4, // Low: no user impact, internal tooling issue
-}
+ENUMERATION IncidentState
+    Detected, Triaged, Mitigating, Mitigated,
+    Resolved, PostMortemScheduled, Closed
 
-#[derive(Debug, Clone, PartialEq)]
-enum IncidentState {
-    Detected,
-    Triaged,
-    Mitigating,
-    Mitigated,
-    Resolved,
-    PostMortemScheduled,
-    Closed,
-}
+STRUCTURE Incident
+    id, title : String
+    severity : Severity
+    state : IncidentState
+    detected_at : Timestamp
+    mitigated_at : Optional<Timestamp>
+    resolved_at : Optional<Timestamp>
+    incident_commander : String
+    affected_services : List<String>
+    timeline : List<TimelineEntry>
 
-struct Incident {
-    id: String,
-    title: String,
-    severity: Severity,
-    state: IncidentState,
-    detected_at: SystemTime,
-    mitigated_at: Option<SystemTime>,
-    resolved_at: Option<SystemTime>,
-    incident_commander: String,
-    affected_services: Vec<String>,
-    timeline: Vec<TimelineEntry>,
-}
+STRUCTURE TimelineEntry
+    timestamp : Timestamp
+    author, message : String
 
-struct TimelineEntry {
-    timestamp: SystemTime,
-    author: String,
-    message: String,
-}
+PROCEDURE Incident.TIME_TO_MITIGATE() → Optional<Duration>
+    IF self.mitigated_at IS NOT NULL THEN
+        RETURN self.mitigated_at - self.detected_at
+    END IF
+    RETURN NULL
 
-impl Incident {
-    fn time_to_mitigate(&self) -> Option<std::time::Duration> {
-        self.mitigated_at
-            .map(|m| m.duration_since(self.detected_at).unwrap_or_default())
-    }
+PROCEDURE Incident.TIME_TO_RESOLVE() → Optional<Duration>
+    IF self.resolved_at IS NOT NULL THEN
+        RETURN self.resolved_at - self.detected_at
+    END IF
+    RETURN NULL
 
-    fn time_to_resolve(&self) -> Option<std::time::Duration> {
-        self.resolved_at
-            .map(|r| r.duration_since(self.detected_at).unwrap_or_default())
-    }
-
-    fn requires_postmortem(&self) -> bool {
-        matches!(self.severity, Severity::Sev1 | Severity::Sev2)
-    }
-}
+PROCEDURE Incident.REQUIRES_POSTMORTEM() → Boolean
+    RETURN self.severity IN {Sev1, Sev2}
 ```
 
 A structured incident logging system goes beyond modeling the incident itself -- it captures a machine-readable audit trail of every action taken during response, enabling analysis of response patterns across incidents:
 
-```rust
-use std::fmt;
-use std::time::SystemTime;
+```text
+ENUMERATION LogLevel
+    Info, Warning, Critical
 
-#[derive(Debug, Clone)]
-enum LogLevel {
-    Info,
-    Warning,
-    Critical,
-}
+ENUMERATION IncidentAction
+    Detected { source : String, alert_name : String }
+    SeverityAssigned(String)
+    CommanderAssigned(String)
+    CommunicationSent { channel : String, message : String }
+    MitigationAttempted { action : String, successful : Boolean }
+    Escalated { from : String, to : String, reason : String }
+    ServiceImpact { service : String, impact_pct : Float }
+    Resolved { root_cause : String }
+    PostMortemLink(String)
 
-#[derive(Debug, Clone)]
-enum IncidentAction {
-    Detected { source: String, alert_name: String },
-    SeverityAssigned(String),            // "SEV-1", "SEV-2", etc.
-    CommanderAssigned(String),           // on-call engineer name
-    CommunicationSent { channel: String, message: String },
-    MitigationAttempted { action: String, successful: bool },
-    Escalated { from: String, to: String, reason: String },
-    ServiceImpact { service: String, impact_pct: f64 },
-    Resolved { root_cause: String },
-    PostMortemLink(String),
-}
-
-struct IncidentLogEntry {
-    timestamp: SystemTime,
-    level: LogLevel,
-    action: IncidentAction,
-    author: String,
-}
+STRUCTURE IncidentLogEntry
+    timestamp : Timestamp
+    level : LogLevel
+    action : IncidentAction
+    author : String
 
 /// A structured log that records every action during an incident for later analysis.
-struct IncidentLog {
-    incident_id: String,
-    entries: Vec<IncidentLogEntry>,
-}
+STRUCTURE IncidentLog
+    incident_id : String
+    entries : List<IncidentLogEntry>
 
-impl IncidentLog {
-    fn new(incident_id: &str) -> Self {
-        Self {
-            incident_id: incident_id.to_string(),
-            entries: Vec::new(),
-        }
-    }
+PROCEDURE IncidentLog.APPEND(level, action, author)
+    APPEND IncidentLogEntry { timestamp ← NOW(), level, action, author } TO self.entries
 
-    fn append(&mut self, level: LogLevel, action: IncidentAction, author: &str) {
-        self.entries.push(IncidentLogEntry {
-            timestamp: SystemTime::now(),
-            level,
-            action,
-            author: author.to_string(),
-        });
-    }
+/// Calculate time from detection to first mitigation attempt.
+PROCEDURE IncidentLog.TIME_TO_FIRST_MITIGATION() → Optional<Duration>
+    detected ← FIRST entry IN self.entries WHERE action IS Detected
+    first_mitigation ← FIRST entry IN self.entries WHERE action IS MitigationAttempted
+    IF detected AND first_mitigation BOTH FOUND THEN
+        RETURN first_mitigation.timestamp - detected.timestamp
+    END IF
+    RETURN NULL
 
-    /// Calculate time from detection to first mitigation attempt.
-    fn time_to_first_mitigation(&self) -> Option<std::time::Duration> {
-        let detected = self.entries.iter().find_map(|e| {
-            if matches!(e.action, IncidentAction::Detected { .. }) {
-                Some(e.timestamp)
-            } else {
-                None
-            }
-        });
-        let first_mitigation = self.entries.iter().find_map(|e| {
-            if matches!(e.action, IncidentAction::MitigationAttempted { .. }) {
-                Some(e.timestamp)
-            } else {
-                None
-            }
-        });
-        match (detected, first_mitigation) {
-            (Some(d), Some(m)) => m.duration_since(d).ok(),
-            _ => None,
-        }
-    }
+/// Count how many mitigation attempts were made before success.
+PROCEDURE IncidentLog.MITIGATION_ATTEMPTS() → (Integer, Integer)
+    total ← 0; successful ← 0
+    FOR EACH entry IN self.entries DO
+        IF entry.action IS MitigationAttempted THEN
+            total ← total + 1
+            IF entry.action.successful THEN successful ← successful + 1
+        END IF
+    END FOR
+    RETURN (total, successful)
 
-    /// Count how many mitigation attempts were made before success.
-    fn mitigation_attempts(&self) -> (usize, usize) {
-        let mut total = 0;
-        let mut successful = 0;
-        for entry in &self.entries {
-            if let IncidentAction::MitigationAttempted {
-                successful: ok, ..
-            } = &entry.action
-            {
-                total += 1;
-                if *ok {
-                    successful += 1;
-                }
-            }
-        }
-        (total, successful)
-    }
+/// List all affected services and their impact percentages.
+PROCEDURE IncidentLog.AFFECTED_SERVICES() → List<(String, Float)>
+    RETURN [(e.action.service, e.action.impact_pct)
+            FOR EACH e IN self.entries WHERE e.action IS ServiceImpact]
 
-    /// List all affected services and their impact percentages.
-    fn affected_services(&self) -> Vec<(String, f64)> {
-        self.entries
-            .iter()
-            .filter_map(|e| {
-                if let IncidentAction::ServiceImpact {
-                    service,
-                    impact_pct,
-                } = &e.action
-                {
-                    Some((service.clone(), *impact_pct))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-}
-
-impl fmt::Display for IncidentLog {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "=== Incident {} ===", self.incident_id)?;
-        for entry in &self.entries {
-            writeln!(
-                f,
-                "[{:?}] ({}) {:?} -- {}",
-                entry.level, entry.author, entry.action,
-                entry.timestamp
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0)
-            )?;
-        }
-        let (total, successful) = self.mitigation_attempts();
-        writeln!(f, "Mitigation attempts: {total} total, {successful} successful")?;
-        Ok(())
-    }
-}
+PROCEDURE IncidentLog.TO_STRING() → String
+    output ← "=== Incident " + self.incident_id + " ==="
+    FOR EACH entry IN self.entries DO
+        output ← output + "[" + entry.level + "] (" + entry.author + ") "
+                  + entry.action + " -- " + entry.timestamp
+    END FOR
+    (total, successful) ← self.MITIGATION_ATTEMPTS()
+    output ← output + "Mitigation attempts: " + total + " total, " + successful + " successful"
+    RETURN output
 ```
 
 ### On-Call Practices
@@ -491,225 +328,86 @@ This means reliability work competes with feature work for engineering resources
 
 A health check aggregator is a concrete example of reliability as a feature -- it gives operators and load balancers a single endpoint that reports whether the service and all its dependencies are functioning correctly:
 
-```rust
-use std::collections::HashMap;
-use std::fmt;
-use std::time::{Duration, Instant};
+```text
+ENUMERATION HealthStatus
+    Healthy
+    Degraded(reason : String)
+    Unhealthy(reason : String)
 
-#[derive(Debug, Clone, PartialEq)]
-enum HealthStatus {
-    Healthy,
-    Degraded(String), // reason for degradation
-    Unhealthy(String), // reason for failure
-}
+STRUCTURE DependencyHealth
+    name : String
+    status : HealthStatus
+    latency : Duration
+    last_checked : Timestamp
 
-#[derive(Debug, Clone)]
-struct DependencyHealth {
-    name: String,
-    status: HealthStatus,
-    latency: Duration,
-    last_checked: Instant,
-}
+/// Interface for checking a dependency's health.
+INTERFACE HealthCheckable
+    PROCEDURE NAME() → String
+    PROCEDURE CHECK() → DependencyHealth
 
-/// Simulates checking a dependency and returning its health.
-/// In production, each function would make a real connection attempt.
-trait HealthCheckable {
-    fn name(&self) -> &str;
-    fn check(&self) -> DependencyHealth;
-}
+/// Database health checker -- in production: attempt a lightweight query like "SELECT 1"
+STRUCTURE DatabaseCheck IMPLEMENTS HealthCheckable
+    connection_string : String
+    timeout : Duration
 
-struct DatabaseCheck {
-    connection_string: String,
-    timeout: Duration,
-}
+    PROCEDURE CHECK() → DependencyHealth
+        start ← CURRENT_TIME()
+        // Execute lightweight query
+        latency ← ELAPSED(start)
+        IF latency > self.timeout THEN
+            status ← Unhealthy("query exceeded timeout")
+        ELSE IF latency > self.timeout / 2 THEN
+            status ← Degraded("query above warning threshold")
+        ELSE
+            status ← Healthy
+        END IF
+        RETURN DependencyHealth { name ← "database", status, latency, last_checked ← NOW() }
 
-impl HealthCheckable for DatabaseCheck {
-    fn name(&self) -> &str {
-        "database"
-    }
+/// Cache health checker -- in production: send PING to Redis/Memcached
+STRUCTURE CacheCheck IMPLEMENTS HealthCheckable
+/// External API health checker -- in production: HTTP GET to health endpoint
+STRUCTURE ExternalApiCheck IMPLEMENTS HealthCheckable
 
-    fn check(&self) -> DependencyHealth {
-        let start = Instant::now();
-        // In production: attempt a lightweight query like "SELECT 1"
-        let latency = start.elapsed();
-        let status = if latency > self.timeout {
-            HealthStatus::Unhealthy(format!(
-                "query took {:?}, exceeds timeout {:?}",
-                latency, self.timeout
-            ))
-        } else if latency > self.timeout / 2 {
-            HealthStatus::Degraded(format!("query took {:?}, above warning threshold", latency))
-        } else {
-            HealthStatus::Healthy
-        };
-
-        DependencyHealth {
-            name: self.name().to_string(),
-            status,
-            latency,
-            last_checked: Instant::now(),
-        }
-    }
-}
-
-struct CacheCheck {
-    host: String,
-    timeout: Duration,
-}
-
-impl HealthCheckable for CacheCheck {
-    fn name(&self) -> &str {
-        "cache"
-    }
-
-    fn check(&self) -> DependencyHealth {
-        let start = Instant::now();
-        // In production: send a PING command to Redis/Memcached
-        let latency = start.elapsed();
-        DependencyHealth {
-            name: self.name().to_string(),
-            status: HealthStatus::Healthy,
-            latency,
-            last_checked: Instant::now(),
-        }
-    }
-}
-
-struct ExternalApiCheck {
-    url: String,
-    timeout: Duration,
-}
-
-impl HealthCheckable for ExternalApiCheck {
-    fn name(&self) -> &str {
-        "external-api"
-    }
-
-    fn check(&self) -> DependencyHealth {
-        let start = Instant::now();
-        // In production: HTTP GET to the external API's health endpoint
-        let latency = start.elapsed();
-        DependencyHealth {
-            name: self.name().to_string(),
-            status: HealthStatus::Healthy,
-            latency,
-            last_checked: Instant::now(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct AggregatedHealth {
-    overall: HealthStatus,
-    dependencies: Vec<DependencyHealth>,
-    checked_at: Instant,
-}
+STRUCTURE AggregatedHealth
+    overall : HealthStatus
+    dependencies : List<DependencyHealth>
+    checked_at : Timestamp
 
 /// Aggregates health checks across all dependencies into a single status.
-struct HealthAggregator {
-    checks: Vec<Box<dyn HealthCheckable>>,
-}
+STRUCTURE HealthAggregator
+    checks : List<HealthCheckable>
 
-impl HealthAggregator {
-    fn new() -> Self {
-        Self { checks: Vec::new() }
-    }
+/// Run all health checks and compute the overall status.
+/// Overall status follows the worst-case: if any dependency is unhealthy,
+/// the service is unhealthy. If any is degraded, the service is degraded.
+PROCEDURE HealthAggregator.CHECK_ALL() → AggregatedHealth
+    results ← [check.CHECK() FOR EACH check IN self.checks]
 
-    fn add_check(&mut self, check: Box<dyn HealthCheckable>) {
-        self.checks.push(check);
-    }
+    IF ANY result IN results WHERE result.status IS Unhealthy THEN
+        failed ← [r.name FOR EACH r IN results WHERE r.status IS Unhealthy]
+        overall ← Unhealthy("failing dependencies: " + JOIN(failed, ", "))
+    ELSE IF ANY result IN results WHERE result.status IS Degraded THEN
+        degraded ← [r.name FOR EACH r IN results WHERE r.status IS Degraded]
+        overall ← Degraded("degraded dependencies: " + JOIN(degraded, ", "))
+    ELSE
+        overall ← Healthy
+    END IF
 
-    /// Run all health checks and compute the overall status.
-    /// Overall status follows the worst-case: if any dependency is unhealthy,
-    /// the service is unhealthy. If any is degraded, the service is degraded.
-    fn check_all(&self) -> AggregatedHealth {
-        let results: Vec<DependencyHealth> =
-            self.checks.iter().map(|c| c.check()).collect();
+    RETURN AggregatedHealth { overall, dependencies ← results, checked_at ← NOW() }
 
-        let overall = if results
-            .iter()
-            .any(|r| matches!(r.status, HealthStatus::Unhealthy(_)))
-        {
-            let failed: Vec<&str> = results
-                .iter()
-                .filter_map(|r| match &r.status {
-                    HealthStatus::Unhealthy(_) => Some(r.name.as_str()),
-                    _ => None,
-                })
-                .collect();
-            HealthStatus::Unhealthy(format!("failing dependencies: {}", failed.join(", ")))
-        } else if results
-            .iter()
-            .any(|r| matches!(r.status, HealthStatus::Degraded(_)))
-        {
-            let degraded: Vec<&str> = results
-                .iter()
-                .filter_map(|r| match &r.status {
-                    HealthStatus::Degraded(_) => Some(r.name.as_str()),
-                    _ => None,
-                })
-                .collect();
-            HealthStatus::Degraded(format!(
-                "degraded dependencies: {}",
-                degraded.join(", ")
-            ))
-        } else {
-            HealthStatus::Healthy
-        };
+/// Returns true only if every dependency is fully healthy.
+PROCEDURE HealthAggregator.IS_READY() → Boolean
+    RETURN self.CHECK_ALL().overall = Healthy
 
-        AggregatedHealth {
-            overall,
-            dependencies: results,
-            checked_at: Instant::now(),
-        }
-    }
+PROCEDURE MAIN()
+    aggregator ← NEW HealthAggregator
+    aggregator.ADD_CHECK(DatabaseCheck { connection_string ← "postgres://localhost:5432/mydb", timeout ← 500ms })
+    aggregator.ADD_CHECK(CacheCheck { host ← "redis://localhost:6379", timeout ← 100ms })
+    aggregator.ADD_CHECK(ExternalApiCheck { url ← "https://api.example.com/health", timeout ← 2s })
 
-    /// Returns true only if every dependency is fully healthy.
-    fn is_ready(&self) -> bool {
-        self.check_all().overall == HealthStatus::Healthy
-    }
-}
-
-impl fmt::Display for AggregatedHealth {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Overall: {:?}", self.overall)?;
-        for dep in &self.dependencies {
-            writeln!(
-                f,
-                "  {}: {:?} (latency: {:?})",
-                dep.name, dep.status, dep.latency
-            )?;
-        }
-        Ok(())
-    }
-}
-
-fn main() {
-    let mut aggregator = HealthAggregator::new();
-
-    aggregator.add_check(Box::new(DatabaseCheck {
-        connection_string: "postgres://localhost:5432/mydb".into(),
-        timeout: Duration::from_millis(500),
-    }));
-    aggregator.add_check(Box::new(CacheCheck {
-        host: "redis://localhost:6379".into(),
-        timeout: Duration::from_millis(100),
-    }));
-    aggregator.add_check(Box::new(ExternalApiCheck {
-        url: "https://api.example.com/health".into(),
-        timeout: Duration::from_secs(2),
-    }));
-
-    let health = aggregator.check_all();
-    println!("{health}");
-    // Output:
-    // Overall: Healthy
-    //   database: Healthy (latency: 42ns)
-    //   cache: Healthy (latency: 28ns)
-    //   external-api: Healthy (latency: 31ns)
-
-    println!("Service ready: {}", aggregator.is_ready());
-}
+    health ← aggregator.CHECK_ALL()
+    PRINT health
+    PRINT "Service ready: " + aggregator.IS_READY()
 ```
 
 ---

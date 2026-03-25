@@ -175,191 +175,121 @@ A model that achieves state-of-the-art accuracy in a research paper may be compl
 
 The `ort` crate provides Rust bindings to ONNX Runtime, enabling high-performance model inference without Python dependencies.
 
-```rust
-// Cargo.toml dependencies:
-// ort = "2"
-// ndarray = "0.15"
-
-use ndarray::{Array2, CowArray};
-use ort::{Environment, Session, SessionBuilder, Value};
-use std::sync::Arc;
-use std::time::Instant;
-
+```text
 /// A thin wrapper around an ONNX Runtime session that handles
 /// model loading, input preparation, and inference.
-struct ModelServer {
-    session: Session,
-}
+STRUCTURE ModelServer
+    session : ONNXSession
 
-impl ModelServer {
-    /// Load a model from an ONNX file path.
-    fn new(model_path: &str) -> Result<Self, ort::Error> {
-        let environment = Arc::new(
-            Environment::builder()
-                .with_name("mlops_inference")
-                .build()?,
-        );
+/// Load a model from an ONNX file path.
+PROCEDURE ModelServer.NEW(model_path) → Result<ModelServer>
+    environment ← BUILD_ENVIRONMENT(name ← "mlops_inference")
+    session ← BUILD_SESSION(environment,
+        optimization_level ← Level3,
+        intra_threads ← 4,
+        model_file ← model_path)
+    RETURN Ok(ModelServer { session })
 
-        let session = SessionBuilder::new(&environment)?
-            .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
-            .with_model_from_file(model_path)?;
-
-        Ok(Self { session })
-    }
-
-    /// Run inference on a batch of input feature vectors.
-    /// Returns the model output as a 2D array.
-    fn predict(&self, input: Array2<f32>) -> Result<Array2<f32>, ort::Error> {
-        let input_shape = input.shape().to_vec();
-        let cow = CowArray::from(input.into_dyn());
-        let input_value = Value::from_array(self.session.allocator(), &cow)?;
-
-        let outputs = self.session.run(vec![input_value])?;
-
-        let output_tensor = outputs[0].try_extract::<f32>()?;
-        let output_view = output_tensor.view();
-        let output = output_view
-            .to_owned()
-            .into_shape((input_shape[0], output_view.shape()[1]))
-            .expect("output shape mismatch");
-
-        Ok(output)
-    }
-}
+/// Run inference on a batch of input feature vectors.
+/// Returns the model output as a 2D array.
+PROCEDURE ModelServer.PREDICT(input) → Result<Array2D<Float32>>
+    input_shape ← SHAPE(input)
+    input_value ← ARRAY_TO_TENSOR(input, self.session.allocator)
+    outputs ← self.session.RUN([input_value])
+    output ← EXTRACT_TENSOR(outputs[0])
+    RESHAPE output TO (input_shape[0], output.columns)
+    RETURN Ok(output)
 
 /// Demonstrates model loading, warm-up, and latency measurement.
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = ModelServer::new("model.onnx")?;
+PROCEDURE MAIN() → Result
+    server ← ModelServer.NEW("model.onnx")
 
     // Warm-up run to trigger any lazy initialization in the runtime.
-    let warmup_input = Array2::<f32>::zeros((1, 128));
-    let _ = server.predict(warmup_input)?;
+    warmup_input ← ZEROS(1, 128)
+    server.PREDICT(warmup_input)
 
     // Benchmark inference latency over 100 requests.
-    let batch = Array2::<f32>::ones((32, 128));
-    let start = Instant::now();
-    let iterations = 100;
+    batch ← ONES(32, 128)
+    start ← CURRENT_TIME()
+    iterations ← 100
 
-    for _ in 0..iterations {
-        let _ = server.predict(batch.clone())?;
-    }
+    FOR i ← 1 TO iterations DO
+        server.PREDICT(CLONE(batch))
+    END FOR
 
-    let elapsed = start.elapsed();
-    let per_request = elapsed / iterations;
-    println!(
-        "Total: {:?}, Per batch: {:?}, Per sample: {:?}",
-        elapsed,
-        per_request,
-        per_request / 32
-    );
-
-    Ok(())
-}
+    elapsed ← ELAPSED(start)
+    per_request ← elapsed / iterations
+    PRINT "Total: " + elapsed + ", Per batch: " + per_request
+          + ", Per sample: " + (per_request / 32)
 ```
 
 ### Tensor Operations with the `candle` Crate
 
 The `candle` crate is a minimalist ML framework for Rust, developed by Hugging Face. It supports GPU acceleration and provides a PyTorch-like tensor API.
 
-```rust
-// Cargo.toml dependencies:
-// candle-core = "0.8"
-// candle-nn = "0.8"
-
-use candle_core::{DType, Device, Result, Tensor};
-use candle_nn::{linear, Linear, Module, VarBuilder, VarMap};
-
+```text
 /// A simple feedforward network for demonstration purposes.
-struct FeedForward {
-    layer1: Linear,
-    layer2: Linear,
-    layer3: Linear,
-}
+STRUCTURE FeedForward
+    layer1 : LinearLayer
+    layer2 : LinearLayer
+    layer3 : LinearLayer
 
-impl FeedForward {
-    fn new(
-        input_dim: usize,
-        hidden_dim: usize,
-        output_dim: usize,
-        vb: VarBuilder,
-    ) -> Result<Self> {
-        let layer1 = linear(input_dim, hidden_dim, vb.pp("layer1"))?;
-        let layer2 = linear(hidden_dim, hidden_dim, vb.pp("layer2"))?;
-        let layer3 = linear(hidden_dim, output_dim, vb.pp("layer3"))?;
-        Ok(Self {
-            layer1,
-            layer2,
-            layer3,
-        })
-    }
+PROCEDURE FeedForward.NEW(input_dim, hidden_dim, output_dim, var_builder) → Result<FeedForward>
+    layer1 ← LINEAR_LAYER(input_dim, hidden_dim, var_builder.SCOPE("layer1"))
+    layer2 ← LINEAR_LAYER(hidden_dim, hidden_dim, var_builder.SCOPE("layer2"))
+    layer3 ← LINEAR_LAYER(hidden_dim, output_dim, var_builder.SCOPE("layer3"))
+    RETURN Ok(FeedForward { layer1, layer2, layer3 })
 
-    fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let x = self.layer1.forward(x)?.relu()?;
-        let x = self.layer2.forward(&x)?.relu()?;
-        self.layer3.forward(&x)
-    }
-}
+PROCEDURE FeedForward.FORWARD(x) → Result<Tensor>
+    x ← RELU(self.layer1.FORWARD(x))
+    x ← RELU(self.layer2.FORWARD(x))
+    RETURN self.layer3.FORWARD(x)
 
 /// Demonstrates creating a model, running a forward pass, and
 /// inspecting the output tensor.
-fn main() -> Result<()> {
-    let device = Device::Cpu;
+PROCEDURE MAIN() → Result
+    device ← CPU
 
-    let varmap = VarMap::new();
-    let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+    varmap ← NEW VarMap
+    vb ← VarBuilder(varmap, dtype ← Float32, device)
 
-    let model = FeedForward::new(128, 64, 10, vb)?;
+    model ← FeedForward.NEW(128, 64, 10, vb)
 
     // Create a batch of 16 samples, each with 128 features.
-    let input = Tensor::randn(0f32, 1.0, (16, 128), &device)?;
-    let output = model.forward(&input)?;
+    input ← RANDOM_NORMAL(mean ← 0, std ← 1.0, shape ← (16, 128), device)
+    output ← model.FORWARD(input)
 
-    println!("Input shape:  {:?}", input.dims());
-    println!("Output shape: {:?}", output.dims());
-    println!("Output:\n{}", output);
-
-    Ok(())
-}
+    PRINT "Input shape:  " + DIMS(input)
+    PRINT "Output shape: " + DIMS(output)
+    PRINT "Output: " + output
 ```
 
 ### Monitoring Feature Drift with Statistical Tests
 
 This example computes the Population Stability Index (PSI) to detect distribution shift between a reference dataset and a production dataset.
 
-```rust
-use std::collections::HashMap;
+```text
+STRUCTURE Bucket
+    lower : Float
+    upper : Float
+    count : Integer
 
-/// Represents a histogram bucket with its range and count.
-#[derive(Debug, Clone)]
-struct Bucket {
-    lower: f64,
-    upper: f64,
-    count: usize,
-}
+/// Compute a histogram from a list of values using fixed-width bins.
+PROCEDURE COMPUTE_HISTOGRAM(values, num_bins) → List<Bucket>
+    min_val ← MIN(values)
+    max_val ← MAX(values)
+    bin_width ← (max_val - min_val) / num_bins
 
-/// Compute a histogram from a slice of values using fixed-width bins.
-fn compute_histogram(values: &[f64], num_bins: usize) -> Vec<Bucket> {
-    let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let bin_width = (max_val - min_val) / num_bins as f64;
+    buckets ← FOR i ← 0 TO num_bins - 1:
+        Bucket { lower ← min_val + i * bin_width,
+                 upper ← min_val + (i + 1) * bin_width,
+                 count ← 0 }
 
-    let mut buckets: Vec<Bucket> = (0..num_bins)
-        .map(|i| Bucket {
-            lower: min_val + i as f64 * bin_width,
-            upper: min_val + (i + 1) as f64 * bin_width,
-            count: 0,
-        })
-        .collect();
-
-    for &v in values {
-        let idx = ((v - min_val) / bin_width).floor() as usize;
-        let idx = idx.min(num_bins - 1);
-        buckets[idx].count += 1;
-    }
-
-    buckets
-}
+    FOR EACH v IN values DO
+        idx ← MIN(FLOOR((v - min_val) / bin_width), num_bins - 1)
+        buckets[idx].count ← buckets[idx].count + 1
+    END FOR
+    RETURN buckets
 
 /// Compute the Population Stability Index (PSI) between a reference
 /// distribution and an actual (production) distribution.
@@ -370,101 +300,62 @@ fn compute_histogram(values: &[f64], num_bins: usize) -> Vec<Bucket> {
 ///   PSI < 0.1  => no significant shift
 ///   PSI 0.1-0.2 => moderate shift, investigate
 ///   PSI > 0.2  => significant shift, action required
-fn compute_psi(reference: &[f64], actual: &[f64], num_bins: usize) -> f64 {
-    let ref_hist = compute_histogram(reference, num_bins);
-    let act_hist = compute_histogram(actual, num_bins);
+PROCEDURE COMPUTE_PSI(reference, actual, num_bins) → Float
+    ref_hist ← COMPUTE_HISTOGRAM(reference, num_bins)
+    act_hist ← COMPUTE_HISTOGRAM(actual, num_bins)
 
-    let ref_total = reference.len() as f64;
-    let act_total = actual.len() as f64;
+    ref_total ← LENGTH(reference)
+    act_total ← LENGTH(actual)
+    epsilon ← 1e-8   // avoid division by zero or log(0)
 
-    // Small epsilon to avoid division by zero or log(0).
-    let epsilon = 1e-8;
-
-    ref_hist
-        .iter()
-        .zip(act_hist.iter())
-        .map(|(r, a)| {
-            let ref_pct = (r.count as f64 / ref_total).max(epsilon);
-            let act_pct = (a.count as f64 / act_total).max(epsilon);
-            (act_pct - ref_pct) * (act_pct / ref_pct).ln()
-        })
-        .sum()
-}
+    psi ← 0.0
+    FOR i ← 0 TO num_bins - 1 DO
+        ref_pct ← MAX(ref_hist[i].count / ref_total, epsilon)
+        act_pct ← MAX(act_hist[i].count / act_total, epsilon)
+        psi ← psi + (act_pct - ref_pct) * LN(act_pct / ref_pct)
+    END FOR
+    RETURN psi
 
 /// Track multiple features and report drift status.
-struct DriftMonitor {
-    reference_data: HashMap<String, Vec<f64>>,
-    psi_threshold_warn: f64,
-    psi_threshold_alert: f64,
-    num_bins: usize,
-}
+STRUCTURE DriftMonitor
+    reference_data : Map<String, List<Float>>
+    psi_threshold_warn : Float ← 0.1
+    psi_threshold_alert : Float ← 0.2
+    num_bins : Integer
 
-#[derive(Debug)]
-enum DriftStatus {
-    Stable(f64),
-    Warning(f64),
-    Alert(f64),
-}
+ENUMERATION DriftStatus
+    Stable(psi : Float)
+    Warning(psi : Float)
+    Alert(psi : Float)
 
-impl DriftMonitor {
-    fn new(num_bins: usize) -> Self {
-        Self {
-            reference_data: HashMap::new(),
-            psi_threshold_warn: 0.1,
-            psi_threshold_alert: 0.2,
-            num_bins,
-        }
-    }
+PROCEDURE DriftMonitor.REGISTER_FEATURE(name, reference)
+    self.reference_data[name] ← reference
 
-    fn register_feature(&mut self, name: &str, reference: Vec<f64>) {
-        self.reference_data.insert(name.to_string(), reference);
-    }
+PROCEDURE DriftMonitor.CHECK_DRIFT(name, actual) → Optional<DriftStatus>
+    reference ← self.reference_data[name]
+    IF reference IS NULL THEN RETURN NULL
+    psi ← COMPUTE_PSI(reference, actual, self.num_bins)
 
-    fn check_drift(&self, name: &str, actual: &[f64]) -> Option<DriftStatus> {
-        let reference = self.reference_data.get(name)?;
-        let psi = compute_psi(reference, actual, self.num_bins);
+    IF psi ≥ self.psi_threshold_alert THEN RETURN Alert(psi)
+    ELSE IF psi ≥ self.psi_threshold_warn THEN RETURN Warning(psi)
+    ELSE RETURN Stable(psi)
 
-        if psi >= self.psi_threshold_alert {
-            Some(DriftStatus::Alert(psi))
-        } else if psi >= self.psi_threshold_warn {
-            Some(DriftStatus::Warning(psi))
-        } else {
-            Some(DriftStatus::Stable(psi))
-        }
-    }
-}
-
-fn main() {
-    let mut monitor = DriftMonitor::new(20);
+PROCEDURE MAIN()
+    monitor ← NEW DriftMonitor(num_bins ← 20)
 
     // Simulate reference data (training distribution).
-    let reference: Vec<f64> = (0..10000)
-        .map(|i| (i as f64 / 10000.0) * 10.0 + 5.0)
-        .collect();
-
-    monitor.register_feature("user_age", reference);
+    reference ← [(i / 10000.0) * 10.0 + 5.0 FOR i ← 0 TO 9999]
+    monitor.REGISTER_FEATURE("user_age", reference)
 
     // Simulate production data with a shifted distribution.
-    let production: Vec<f64> = (0..5000)
-        .map(|i| (i as f64 / 5000.0) * 10.0 + 8.0) // shifted by +3
-        .collect();
+    production ← [(i / 5000.0) * 10.0 + 8.0 FOR i ← 0 TO 4999]  // shifted by +3
 
-    match monitor.check_drift("user_age", &production) {
-        Some(DriftStatus::Stable(psi)) => {
-            println!("Feature 'user_age': STABLE (PSI = {:.4})", psi);
-        }
-        Some(DriftStatus::Warning(psi)) => {
-            println!("Feature 'user_age': WARNING (PSI = {:.4})", psi);
-        }
-        Some(DriftStatus::Alert(psi)) => {
-            println!("Feature 'user_age': ALERT (PSI = {:.4})", psi);
-            println!("Action: trigger retraining pipeline.");
-        }
-        None => {
-            println!("Feature 'user_age' not registered.");
-        }
-    }
-}
+    MATCH monitor.CHECK_DRIFT("user_age", production)
+        CASE Stable(psi):  PRINT "Feature 'user_age': STABLE (PSI = " + psi + ")"
+        CASE Warning(psi): PRINT "Feature 'user_age': WARNING (PSI = " + psi + ")"
+        CASE Alert(psi):   PRINT "Feature 'user_age': ALERT (PSI = " + psi + ")"
+                           PRINT "Action: trigger retraining pipeline."
+        CASE NULL:         PRINT "Feature 'user_age' not registered."
 ```
 
 ---

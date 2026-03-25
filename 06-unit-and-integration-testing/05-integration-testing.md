@@ -27,23 +27,19 @@ my_project/
       mod.rs          # Shared test utilities
 ```
 
-```rust
-// tests/test_db.rs
-use my_project::UserRepository;
+```text
+// tests/test_db
+ASYNC TEST create_and_retrieve_user
+    pool <- SETUP_TEST_DB()
+    repo <- NEW UserRepository(pool)
 
-#[tokio::test]
-async fn create_and_retrieve_user() {
-    let pool = setup_test_db().await;
-    let repo = UserRepository::new(pool.clone());
+    created <- repo.CREATE("Alice", "alice@example.com")
+    found <- repo.FIND_BY_ID(created.id)
 
-    let created = repo.create("Alice", "alice@example.com").await.unwrap();
-    let found = repo.find_by_id(created.id).await.unwrap().unwrap();
+    ASSERT found.name = "Alice"
+    ASSERT found.email = "alice@example.com"
 
-    assert_eq!(found.name, "Alice");
-    assert_eq!(found.email, "alice@example.com");
-
-    cleanup_test_db(pool).await;
-}
+    CLEANUP_TEST_DB(pool)
 ```
 
 Integration tests are run with `cargo test` alongside unit tests. To run only integration tests, use `cargo test --test test_db`.
@@ -63,27 +59,19 @@ The `sqlx` crate provides first-class test support. The `#[sqlx::test]` macro cr
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate"] }
 ```
 
-```rust
-use sqlx::PgPool;
-
-#[sqlx::test(migrations = "./migrations")]
-async fn user_email_must_be_unique(pool: PgPool) {
+```text
+// Database test with automatic migration
+ASYNC TEST user_email_must_be_unique(pool: PgPool)
     // The pool is connected to a fresh, migrated test database
-    sqlx::query("INSERT INTO users (name, email) VALUES ($1, $2)")
-        .bind("Alice")
-        .bind("alice@example.com")
-        .execute(&pool)
-        .await
-        .unwrap();
+    EXECUTE SQL "INSERT INTO users (name, email) VALUES ($1, $2)"
+        WITH ("Alice", "alice@example.com")
+        ON pool
 
-    let result = sqlx::query("INSERT INTO users (name, email) VALUES ($1, $2)")
-        .bind("Bob")
-        .bind("alice@example.com")
-        .execute(&pool)
-        .await;
+    result <- EXECUTE SQL "INSERT INTO users (name, email) VALUES ($1, $2)"
+        WITH ("Bob", "alice@example.com")
+        ON pool
 
-    assert!(result.is_err(), "Duplicate email should be rejected by unique constraint");
-}
+    ASSERT result IS error, "Duplicate email should be rejected by unique constraint"
 ```
 
 Each test gets its own database (or transaction), so tests cannot interfere with each other.
@@ -92,23 +80,15 @@ Each test gets its own database (or transaction), so tests cannot interfere with
 
 Load seed data for tests that need a populated database:
 
-```rust
-#[sqlx::test(
-    migrations = "./migrations",
-    fixtures("users", "orders")  // loads tests/fixtures/users.sql, orders.sql
-)]
-async fn find_orders_for_user(pool: PgPool) {
-    let orders = sqlx::query_as::<_, Order>(
-        "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at"
-    )
-    .bind(1)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+```text
+// Database test with migration and fixtures (users.sql, orders.sql)
+ASYNC TEST find_orders_for_user(pool: PgPool)
+    orders <- QUERY "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at"
+        WITH (1)
+        FETCH ALL FROM pool
 
-    assert_eq!(orders.len(), 3);
-    assert_eq!(orders[0].total, 29.99);
-}
+    ASSERT orders.length = 3
+    ASSERT orders[0].total = 29.99
 ```
 
 ## API Endpoint Testing
@@ -117,70 +97,36 @@ Integration tests for HTTP APIs verify the full request-response cycle: routing,
 
 ### Testing with axum
 
-```rust
-use axum::{Router, body::Body, http::{Request, StatusCode}};
-use tower::ServiceExt; // for `oneshot`
+```text
+FUNCTION APP() -> Router
+    RETURN Router
+        .ROUTE("/users", POST -> CREATE_USER)
+        .ROUTE("/users/:id", GET -> GET_USER)
 
-fn app() -> Router {
-    Router::new()
-        .route("/users", post(create_user))
-        .route("/users/:id", get(get_user))
-}
+ASYNC TEST create_user_returns_201
+    app <- APP()
+    response <- app.SEND_REQUEST(
+        method: "POST",
+        uri: "/users",
+        header: "Content-Type: application/json",
+        body: '{"name": "Alice", "email": "alice@example.com"}'
+    )
+    ASSERT response.status = 201 CREATED
 
-#[tokio::test]
-async fn create_user_returns_201() {
-    let app = app();
+ASYNC TEST get_nonexistent_user_returns_404
+    app <- APP()
+    response <- app.SEND_REQUEST(uri: "/users/99999", body: empty)
+    ASSERT response.status = 404 NOT FOUND
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/users")
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"name": "Alice", "email": "alice@example.com"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::CREATED);
-}
-
-#[tokio::test]
-async fn get_nonexistent_user_returns_404() {
-    let app = app();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/users/99999")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn create_user_with_invalid_json_returns_400() {
-    let app = app();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/users")
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"name": }"#)) // malformed JSON
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-}
+ASYNC TEST create_user_with_invalid_json_returns_400
+    app <- APP()
+    response <- app.SEND_REQUEST(
+        method: "POST",
+        uri: "/users",
+        header: "Content-Type: application/json",
+        body: '{"name": }'  // malformed JSON
+    )
+    ASSERT response.status = 400 BAD REQUEST
 ```
 
 This pattern tests the real router, middleware, and handlers without starting a TCP server. The `oneshot` method sends a single request through the application stack.
@@ -195,32 +141,24 @@ testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
 ```
 
-```rust
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
+```text
+ASYNC TEST test_with_real_postgres
+    container <- START Postgres container
+    port <- container.GET_HOST_PORT(5432)
 
-#[tokio::test]
-async fn test_with_real_postgres() {
-    let container = Postgres::default().start().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-
-    let connection_string = format!("postgres://postgres:postgres@localhost:{}/postgres", port);
-    let pool = PgPool::connect(&connection_string).await.unwrap();
+    connection_string <- "postgres://postgres:postgres@localhost:" + port + "/postgres"
+    pool <- CONNECT_TO_PG(connection_string)
 
     // Run migrations
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    RUN_MIGRATIONS("./migrations", pool)
 
     // Now test with a real PostgreSQL instance
-    let result = sqlx::query("SELECT 1 + 1 AS sum")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    result <- QUERY "SELECT 1 + 1 AS sum" FETCH ONE FROM pool
 
-    let sum: i32 = result.get("sum");
-    assert_eq!(sum, 2);
+    sum <- result.GET("sum")
+    ASSERT sum = 2
 
     // Container is automatically stopped and removed when dropped
-}
 ```
 
 Test containers are slower than in-memory databases but provide exact parity with production. Use them when you need to test database-specific features (PostgreSQL's JSONB operators, full-text search, or advisory locks).
@@ -233,29 +171,20 @@ The hardest part of integration testing is ensuring tests do not interfere with 
 
 Wrap each test in a transaction and roll it back at the end. The database never sees the test's writes.
 
-```rust
-#[tokio::test]
-async fn test_within_transaction() {
-    let pool = get_shared_pool().await;
-    let mut tx = pool.begin().await.unwrap();
+```text
+ASYNC TEST test_within_transaction
+    pool <- GET_SHARED_POOL()
+    tx <- pool.BEGIN_TRANSACTION()
 
-    sqlx::query("INSERT INTO users (name, email) VALUES ($1, $2)")
-        .bind("Test User")
-        .bind("test@example.com")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
+    EXECUTE SQL "INSERT INTO users (name, email) VALUES ($1, $2)"
+        WITH ("Test User", "test@example.com") ON tx
 
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1")
-        .bind("test@example.com")
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap();
+    count <- QUERY "SELECT COUNT(*) FROM users WHERE email = $1"
+        WITH ("test@example.com") FETCH ONE FROM tx
 
-    assert_eq!(count.0, 1);
+    ASSERT count = 1
 
-    // Transaction is rolled back when `tx` is dropped (not committed)
-}
+    // Transaction is rolled back when tx is dropped (not committed)
 ```
 
 Pros: fast, no cleanup needed. Cons: cannot test commit-dependent behavior (triggers that fire on commit, sequences that advance).
@@ -270,21 +199,15 @@ Pros: complete isolation, tests commit-dependent behavior. Cons: slower due to d
 
 Share a database but truncate all tables before each test.
 
-```rust
-async fn reset_database(pool: &PgPool) {
-    sqlx::query("TRUNCATE users, orders, payments RESTART IDENTITY CASCADE")
-        .execute(pool)
-        .await
-        .unwrap();
-}
+```text
+ASYNC FUNCTION RESET_DATABASE(pool)
+    EXECUTE SQL "TRUNCATE users, orders, payments RESTART IDENTITY CASCADE" ON pool
 
-#[tokio::test]
-async fn test_with_clean_tables() {
-    let pool = get_shared_pool().await;
-    reset_database(&pool).await;
+ASYNC TEST test_with_clean_tables
+    pool <- GET_SHARED_POOL()
+    RESET_DATABASE(pool)
 
     // Test runs against empty tables
-}
 ```
 
 Pros: faster than creating a database per test. Cons: tests must not run in parallel against the same database unless they use distinct data.
@@ -293,27 +216,18 @@ Pros: faster than creating a database per test. Cons: tests must not run in para
 
 Use unique identifiers in test data so tests cannot collide:
 
-```rust
-#[tokio::test]
-async fn test_with_unique_data() {
-    let pool = get_shared_pool().await;
-    let unique_email = format!("test-{}@example.com", Uuid::new_v4());
+```text
+ASYNC TEST test_with_unique_data
+    pool <- GET_SHARED_POOL()
+    unique_email <- "test-" + NEW_UUID() + "@example.com"
 
-    sqlx::query("INSERT INTO users (name, email) VALUES ($1, $2)")
-        .bind("Test User")
-        .bind(&unique_email)
-        .execute(&pool)
-        .await
-        .unwrap();
+    EXECUTE SQL "INSERT INTO users (name, email) VALUES ($1, $2)"
+        WITH ("Test User", unique_email) ON pool
 
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
-        .bind(&unique_email)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    user <- QUERY "SELECT * FROM users WHERE email = $1"
+        WITH (unique_email) FETCH ONE FROM pool
 
-    assert_eq!(user.name, "Test User");
-}
+    ASSERT user.name = "Test User"
 ```
 
 Pros: tests can run in parallel. Cons: leftover data accumulates (needs periodic cleanup), assertions must filter by unique ID.
@@ -322,35 +236,26 @@ Pros: tests can run in parallel. Cons: leftover data accumulates (needs periodic
 
 Avoid duplicating setup code across integration tests. Use a shared module:
 
-```rust
-// tests/common/mod.rs
-use sqlx::PgPool;
+```text
+// tests/common/mod
 
-pub async fn setup_test_db() -> PgPool {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://localhost/myapp_test".to_string());
-    let pool = PgPool::connect(&database_url).await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
-}
+ASYNC FUNCTION SETUP_TEST_DB() -> PgPool
+    database_url <- ENV("TEST_DATABASE_URL") OR "postgres://localhost/myapp_test"
+    pool <- PgPool.CONNECT(database_url)
+    RUN_MIGRATIONS("./migrations", pool)
+    RETURN pool
 
-pub fn test_user(name: &str, email: &str) -> CreateUserRequest {
-    CreateUserRequest {
-        name: name.to_string(),
-        email: email.to_string(),
-    }
-}
+FUNCTION TEST_USER(name: string, email: string) -> CreateUserRequest
+    RETURN CreateUserRequest { name, email }
 ```
 
-```rust
-// tests/test_users.rs
-mod common;
+```text
+// tests/test_users
+IMPORT common
 
-#[tokio::test]
-async fn create_user_persists_to_database() {
-    let pool = common::setup_test_db().await;
+ASYNC TEST create_user_persists_to_database
+    pool <- common.SETUP_TEST_DB()
     // ...
-}
 ```
 
 ## When to Write Integration Tests vs. Unit Tests

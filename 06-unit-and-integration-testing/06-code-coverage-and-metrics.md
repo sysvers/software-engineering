@@ -12,21 +12,17 @@ Coverage is useful as a negative indicator: low coverage definitely means undert
 
 The most common metric. It counts the percentage of source lines executed by tests.
 
-```rust
-fn categorize_age(age: u32) -> &'static str {
-    if age < 13 {          // Line 1
-        "child"            // Line 2
-    } else if age < 18 {   // Line 3
-        "teenager"         // Line 4
-    } else {               // Line 5
-        "adult"            // Line 6
-    }
-}
+```text
+FUNCTION CATEGORIZE_AGE(age: unsigned integer) -> string
+    IF age < 13               // Line 1
+        RETURN "child"        // Line 2
+    ELSE IF age < 18          // Line 3
+        RETURN "teenager"     // Line 4
+    ELSE                      // Line 5
+        RETURN "adult"        // Line 6
 
-#[test]
-fn test_child() {
-    assert_eq!(categorize_age(5), "child");
-}
+TEST test_child
+    ASSERT CATEGORIZE_AGE(5) = "child"
 ```
 
 This single test hits lines 1 and 2 but misses lines 3-6. Line coverage: 33%. Adding a test for `categorize_age(15)` hits lines 3-4. Adding `categorize_age(25)` hits lines 5-6. Now coverage is 100%.
@@ -35,18 +31,16 @@ This single test hits lines 1 and 2 but misses lines 3-6. Line coverage: 33%. Ad
 
 Branch coverage tracks whether each decision point (if/else, match arms, boolean conditions) has been evaluated to both true and false. It is stricter than line coverage.
 
-```rust
-fn apply_discount(price: f64, is_member: bool, has_coupon: bool) -> f64 {
-    if is_member && has_coupon {
-        price * 0.7  // 30% off
-    } else if is_member {
-        price * 0.85 // 15% off
-    } else if has_coupon {
-        price * 0.9  // 10% off
-    } else {
-        price
-    }
-}
+```text
+FUNCTION APPLY_DISCOUNT(price: float, is_member: boolean, has_coupon: boolean) -> float
+    IF is_member AND has_coupon
+        RETURN price * 0.7   // 30% off
+    ELSE IF is_member
+        RETURN price * 0.85  // 15% off
+    ELSE IF has_coupon
+        RETURN price * 0.9   // 10% off
+    ELSE
+        RETURN price
 ```
 
 Line coverage might show 100% with three tests, but branch coverage requires testing all four paths. The combination `is_member=true, has_coupon=false` is a distinct branch from `is_member=true, has_coupon=true`.
@@ -61,25 +55,21 @@ This is the most important section in this document. Teams that chase coverage n
 
 ### 100% Coverage with Zero Value
 
-```rust
-#[test]
-fn covers_everything_tests_nothing() {
-    let _ = process_payment(100.0, "USD");     // No assertions
-    let _ = validate_email("test@example.com"); // No assertions
-    let _ = calculate_shipping(5.0, "US");     // No assertions
-}
+```text
+TEST covers_everything_tests_nothing
+    CALL PROCESS_PAYMENT(100.0, "USD")       // No assertions
+    CALL VALIDATE_EMAIL("test@example.com")  // No assertions
+    CALL CALCULATE_SHIPPING(5.0, "US")       // No assertions
 ```
 
 This test achieves high coverage by calling functions and ignoring the results. It will never fail, which means it will never catch a bug. Coverage tools cannot tell the difference between a test that makes thoughtful assertions and a test that discards every return value.
 
 ### Coverage That Tests the Wrong Thing
 
-```rust
-#[test]
-fn test_with_assertions_but_wrong_focus() {
-    let result = calculate_tax(100.0, "CA");
-    assert!(result > 0.0);  // Passes for any positive number
-}
+```text
+TEST test_with_assertions_but_wrong_focus
+    result <- CALCULATE_TAX(100.0, "CA")
+    ASSERT result > 0.0  // Passes for any positive number
 ```
 
 This test hits the line, asserts *something*, and achieves coverage. But `calculate_tax` returning `1.0` or `99.0` would both pass. The test does not verify correctness.

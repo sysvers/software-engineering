@@ -32,60 +32,38 @@ Key techniques for working with legacy code:
 - **Dependency breaking**: Legacy systems tend to have deeply entangled dependencies. Introduce
   interfaces and indirection layers to isolate components for testing and eventual replacement.
 
-```rust
+```text
 /// A legacy pricing engine that we cannot easily modify.
-/// We wrap it behind a trait so we can swap in a new implementation later.
-pub trait PricingEngine {
-    fn calculate_price(&self, product_id: &str, quantity: u32) -> f64;
-}
+/// We wrap it behind an interface so we can swap in a new implementation later.
+INTERFACE PricingEngine
+    PROCEDURE CALCULATE_PRICE(product_id, quantity) → Float
 
 /// The legacy implementation -- calls into old business logic.
-pub struct LegacyPricingEngine {
-    // Imagine this holds database connections, cached configs, etc.
-}
-
-impl PricingEngine for LegacyPricingEngine {
-    fn calculate_price(&self, product_id: &str, quantity: u32) -> f64 {
+STRUCTURE LegacyPricingEngine IMPLEMENTS PricingEngine
+    PROCEDURE CALCULATE_PRICE(product_id, quantity) → Float
         // Original convoluted pricing logic lives here.
         // We do not touch this; we only wrap it.
-        let base = match product_id {
-            "SKU-001" => 9.99,
-            "SKU-002" => 19.99,
-            _ => 0.0,
-        };
-        base * quantity as f64
-    }
-}
+        MATCH product_id
+            CASE "SKU-001" → base ← 9.99
+            CASE "SKU-002" → base ← 19.99
+            DEFAULT         → base ← 0.0
+        RETURN base * quantity
 
 /// The new implementation that will eventually replace the legacy one.
-pub struct NewPricingEngine {
-    // Backed by a cleaner data model and pricing rules engine.
-}
-
-impl PricingEngine for NewPricingEngine {
-    fn calculate_price(&self, product_id: &str, quantity: u32) -> f64 {
+STRUCTURE NewPricingEngine IMPLEMENTS PricingEngine
+    PROCEDURE CALCULATE_PRICE(product_id, quantity) → Float
         // New logic with proper discount tiers, currency handling, etc.
-        let base = self.lookup_base_price(product_id);
-        let discount = self.compute_volume_discount(quantity);
-        base * quantity as f64 * (1.0 - discount)
-    }
-}
+        base ← self.LOOKUP_BASE_PRICE(product_id)
+        discount ← self.COMPUTE_VOLUME_DISCOUNT(quantity)
+        RETURN base * quantity * (1.0 - discount)
 
-impl NewPricingEngine {
-    fn lookup_base_price(&self, _product_id: &str) -> f64 {
-        10.00 // Simplified for illustration
-    }
+    PROCEDURE LOOKUP_BASE_PRICE(product_id) → Float
+        RETURN 10.00  // Simplified for illustration
 
-    fn compute_volume_discount(&self, quantity: u32) -> f64 {
-        if quantity > 100 {
-            0.15
-        } else if quantity > 10 {
-            0.05
-        } else {
-            0.0
-        }
-    }
-}
+    PROCEDURE COMPUTE_VOLUME_DISCOUNT(quantity) → Float
+        IF quantity > 100 THEN RETURN 0.15
+        ELSE IF quantity > 10 THEN RETURN 0.05
+        ELSE RETURN 0.0
 ```
 
 ### The Strangler Fig Pattern
@@ -104,41 +82,23 @@ The process works as follows:
 3. **Expand**: Over time, route more and more traffic to the new system.
 4. **Retire**: Once all traffic is handled by the new system, decommission the legacy components.
 
-```rust
-use std::sync::Arc;
-
+```text
 /// A router that implements the strangler fig pattern.
 /// It decides whether to send a request to the legacy or new system.
-pub struct StranglerFigRouter {
-    legacy: Arc<dyn PricingEngine + Send + Sync>,
-    new_system: Arc<dyn PricingEngine + Send + Sync>,
-    migrated_products: Vec<String>,
-}
+STRUCTURE StranglerFigRouter
+    legacy : PricingEngine
+    new_system : PricingEngine
+    migrated_products : List<String>
 
-impl StranglerFigRouter {
-    pub fn new(
-        legacy: Arc<dyn PricingEngine + Send + Sync>,
-        new_system: Arc<dyn PricingEngine + Send + Sync>,
-    ) -> Self {
-        Self {
-            legacy,
-            new_system,
-            migrated_products: Vec::new(),
-        }
-    }
+PROCEDURE StranglerFigRouter.MIGRATE_PRODUCT(product_id)
+    APPEND product_id TO self.migrated_products
 
-    pub fn migrate_product(&mut self, product_id: String) {
-        self.migrated_products.push(product_id);
-    }
-
-    pub fn calculate_price(&self, product_id: &str, quantity: u32) -> f64 {
-        if self.migrated_products.iter().any(|p| p == product_id) {
-            self.new_system.calculate_price(product_id, quantity)
-        } else {
-            self.legacy.calculate_price(product_id, quantity)
-        }
-    }
-}
+PROCEDURE StranglerFigRouter.CALCULATE_PRICE(product_id, quantity) → Float
+    IF product_id IN self.migrated_products THEN
+        RETURN self.new_system.CALCULATE_PRICE(product_id, quantity)
+    ELSE
+        RETURN self.legacy.CALCULATE_PRICE(product_id, quantity)
+    END IF
 ```
 
 ### Incremental Rewrites
@@ -177,44 +137,27 @@ the most ambitious strategy short of a full rewrite and typically uses the stran
 **Parallel Run (Dark Launch)**: Run the new system alongside the old one, comparing outputs without
 serving the new system's results to users. This builds confidence before cutover.
 
-```rust
+```text
 /// Parallel run: execute both engines and compare results for validation.
-pub struct ParallelRunner {
-    legacy: Arc<dyn PricingEngine + Send + Sync>,
-    candidate: Arc<dyn PricingEngine + Send + Sync>,
-    tolerance: f64,
-}
+STRUCTURE ParallelRunner
+    legacy : PricingEngine
+    candidate : PricingEngine
+    tolerance : Float
 
-impl ParallelRunner {
-    pub fn new(
-        legacy: Arc<dyn PricingEngine + Send + Sync>,
-        candidate: Arc<dyn PricingEngine + Send + Sync>,
-        tolerance: f64,
-    ) -> Self {
-        Self {
-            legacy,
-            candidate,
-            tolerance,
-        }
-    }
+/// Always returns the legacy result, but logs discrepancies.
+PROCEDURE ParallelRunner.CALCULATE_PRICE(product_id, quantity) → Float
+    legacy_result ← self.legacy.CALCULATE_PRICE(product_id, quantity)
+    candidate_result ← self.candidate.CALCULATE_PRICE(product_id, quantity)
 
-    /// Always returns the legacy result, but logs discrepancies.
-    pub fn calculate_price(&self, product_id: &str, quantity: u32) -> f64 {
-        let legacy_result = self.legacy.calculate_price(product_id, quantity);
-        let candidate_result = self.candidate.calculate_price(product_id, quantity);
+    diff ← ABS(legacy_result - candidate_result)
+    IF diff > self.tolerance THEN
+        PRINT "[MISMATCH] product=" + product_id + " qty=" + quantity
+              + " legacy=" + legacy_result + " candidate=" + candidate_result
+              + " diff=" + diff
+    END IF
 
-        let diff = (legacy_result - candidate_result).abs();
-        if diff > self.tolerance {
-            eprintln!(
-                "[MISMATCH] product={} qty={} legacy={:.2} candidate={:.2} diff={:.2}",
-                product_id, quantity, legacy_result, candidate_result, diff
-            );
-        }
-
-        // Always trust legacy until we are confident in the candidate.
-        legacy_result
-    }
-}
+    // Always trust legacy until we are confident in the candidate.
+    RETURN legacy_result
 ```
 
 ### Backward Compatibility
@@ -247,9 +190,7 @@ shared state. Strategies include:
 - **Online schema migration**: Tools like gh-ost (GitHub) or pt-online-schema-change (Percona)
   allow schema changes on large MySQL tables without locking.
 
-```rust
-use std::collections::HashMap;
-
+```text
 /// Demonstrates the expand-and-contract pattern for a user record migration.
 /// Phase 1: The old schema has `name` as a single field.
 /// Phase 2: We add `first_name` and `last_name` (expand).
@@ -257,30 +198,25 @@ use std::collections::HashMap;
 /// Phase 4: We read from new fields only.
 /// Phase 5: We drop the old `name` field (contract).
 
-#[derive(Debug, Clone)]
-pub struct UserRecordExpanded {
-    pub id: u64,
-    pub name: Option<String>,          // Old field -- will be removed in Phase 5
-    pub first_name: Option<String>,    // New field -- added in Phase 2
-    pub last_name: Option<String>,     // New field -- added in Phase 2
-}
+STRUCTURE UserRecordExpanded
+    id : Integer
+    name : Optional<String>          // Old field -- will be removed in Phase 5
+    first_name : Optional<String>    // New field -- added in Phase 2
+    last_name : Optional<String>     // New field -- added in Phase 2
 
-impl UserRecordExpanded {
-    /// Phase 3: Write to both old and new fields.
-    pub fn set_name(&mut self, first: &str, last: &str) {
-        self.first_name = Some(first.to_string());
-        self.last_name = Some(last.to_string());
-        self.name = Some(format!("{} {}", first, last)); // Backward compat
-    }
+/// Phase 3: Write to both old and new fields.
+PROCEDURE UserRecordExpanded.SET_NAME(first, last)
+    self.first_name ← first
+    self.last_name ← last
+    self.name ← first + " " + last    // Backward compat
 
-    /// Phase 4: Read from new fields, fall back to old if new fields are empty.
-    pub fn display_name(&self) -> String {
-        match (&self.first_name, &self.last_name) {
-            (Some(f), Some(l)) => format!("{} {}", f, l),
-            _ => self.name.clone().unwrap_or_else(|| "Unknown".to_string()),
-        }
-    }
-}
+/// Phase 4: Read from new fields, fall back to old if new fields are empty.
+PROCEDURE UserRecordExpanded.DISPLAY_NAME() → String
+    IF self.first_name IS NOT NULL AND self.last_name IS NOT NULL THEN
+        RETURN self.first_name + " " + self.last_name
+    ELSE
+        RETURN self.name OR "Unknown"
+    END IF
 ```
 
 ### Risk Management During Migration

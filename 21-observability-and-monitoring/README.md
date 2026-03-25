@@ -60,58 +60,43 @@ tracing-appender = "0.2"
 
 **Basic setup with JSON output:**
 
-```rust
-use tracing::{info, warn, error, instrument, Level};
-use tracing_subscriber::{fmt, EnvFilter};
-
-fn init_tracing() {
-    tracing_subscriber::fmt()
-        .json()                          // Structured JSON output
-        .with_env_filter(
-            EnvFilter::from_default_env() // RUST_LOG=info,my_crate=debug
-                .add_directive(Level::INFO.into()),
-        )
-        .with_target(true)               // Include module path
-        .with_thread_ids(true)           // Include thread ID
-        .with_file(true)                 // Include source file
-        .with_line_number(true)          // Include line number
-        .init();
-}
+```text
+PROCEDURE INIT_TRACING()
+    CONFIGURE_SUBSCRIBER(
+        format ← JSON,                         // Structured JSON output
+        env_filter ← FROM_ENV("RUST_LOG"),      // e.g. RUST_LOG=info,my_crate=debug
+        default_level ← INFO,
+        include_target ← TRUE,                  // Include module path
+        include_thread_ids ← TRUE,              // Include thread ID
+        include_file ← TRUE,                    // Include source file
+        include_line_number ← TRUE              // Include line number
+    )
+    INSTALL_SUBSCRIBER()
 ```
 
 **Using spans and structured fields:**
 
-```rust
-use tracing::{info, warn, instrument, Span};
+```text
+// Automatically creates a span with order_id, tracks entry/exit
+PROCEDURE PROCESS_ORDER(order_id, db_pool) → Result<OrderResult>
+    LOG INFO "processing order"
 
-#[instrument(skip(db_pool), fields(order_id = %order_id))]
-async fn process_order(
-    order_id: u64,
-    db_pool: &DbPool,
-) -> Result<OrderResult, OrderError> {
-    info!("processing order");
+    items ← FETCH_ITEMS(db_pool, order_id)
+    LOG INFO "fetched order items", item_count ← LENGTH(items)
 
-    let items = fetch_items(db_pool, order_id).await?;
-    info!(item_count = items.len(), "fetched order items");
+    total ← CALCULATE_TOTAL(items)
+    IF total > 1000000 THEN
+        LOG WARN "high-value order detected",
+            total_cents ← total,
+            threshold ← 1000000
+    END IF
 
-    let total = calculate_total(&items);
-    if total > 10_000_00 {
-        warn!(
-            total_cents = total,
-            threshold = 10_000_00,
-            "high-value order detected"
-        );
-    }
+    result ← CHARGE_PAYMENT(order_id, total)
+    LOG INFO "payment processed",
+        payment_id ← result.payment_id,
+        amount_cents ← total
 
-    let result = charge_payment(order_id, total).await?;
-    info!(
-        payment_id = %result.payment_id,
-        amount_cents = total,
-        "payment processed"
-    );
-
-    Ok(result)
-}
+    RETURN Ok(result)
 ```
 
 The `#[instrument]` macro automatically creates a span around the function, records its arguments as structured fields, and tracks entry/exit. The JSON output looks like:
@@ -156,38 +141,26 @@ axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
 
-```rust
-use metrics::{counter, gauge, histogram};
-use metrics_exporter_prometheus::PrometheusBuilder;
-use std::time::Instant;
-
-fn init_metrics() {
+```text
+PROCEDURE INIT_METRICS()
     // Starts a metrics exporter on 0.0.0.0:9000/metrics
-    PrometheusBuilder::new()
-        .with_http_listener(([0, 0, 0, 0], 9000))
-        .install()
-        .expect("failed to install Prometheus recorder");
-}
+    INSTALL_PROMETHEUS_EXPORTER(listen ← "0.0.0.0:9000")
 
-async fn handle_request(req: Request) -> Response {
-    let start = Instant::now();
+PROCEDURE HANDLE_REQUEST(req) → Response
+    start ← CURRENT_TIME()
 
-    counter!("http_requests_total", "method" => req.method().as_str().to_owned(), "path" => req.uri().path().to_owned()).increment(1);
-    gauge!("http_requests_in_flight").increment(1.0);
+    INCREMENT COUNTER "http_requests_total" WITH method ← req.method, path ← req.path
+    INCREMENT GAUGE "http_requests_in_flight" BY 1.0
 
-    let response = process(req).await;
+    response ← PROCESS(req)
 
-    let duration = start.elapsed().as_secs_f64();
-    histogram!("http_request_duration_seconds", "method" => req.method().as_str().to_owned()).record(duration);
-    gauge!("http_requests_in_flight").decrement(1.0);
+    duration ← ELAPSED_SECONDS(start)
+    RECORD HISTOGRAM "http_request_duration_seconds" WITH method ← req.method, value ← duration
+    DECREMENT GAUGE "http_requests_in_flight" BY 1.0
 
-    counter!(
-        "http_responses_total",
-        "status" => response.status().as_u16().to_string()
-    ).increment(1);
+    INCREMENT COUNTER "http_responses_total" WITH status ← response.status
 
-    response
-}
+    RETURN response
 ```
 
 The exposed `/metrics` endpoint produces output Prometheus can scrape:
@@ -244,36 +217,24 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ```
 
-```rust
-use opentelemetry::trace::TracerProvider;
-use opentelemetry_otlp::SpanExporter;
-use opentelemetry_sdk::{trace::SdkTracerProvider, runtime, Resource};
-use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+```text
+PROCEDURE INIT_TELEMETRY() → TracerProvider
+    exporter ← BUILD_OTLP_SPAN_EXPORTER(transport ← "gRPC/tonic")
 
-fn init_telemetry() -> SdkTracerProvider {
-    let exporter = SpanExporter::builder()
-        .with_tonic()
-        .build()
-        .expect("failed to create OTLP exporter");
+    provider ← BUILD_TRACER_PROVIDER(
+        exporter ← exporter,
+        resource ← Resource(service_name ← "order-service")
+    )
 
-    let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter)
-        .with_resource(Resource::builder()
-            .with_service_name("order-service")
-            .build())
-        .build();
+    tracer ← provider.GET_TRACER("order-service")
 
-    let tracer = provider.tracer("order-service");
+    INSTALL_SUBSCRIBER(
+        env_filter ← FROM_ENV_DEFAULT(),
+        json_logging_layer,
+        opentelemetry_layer ← OpenTelemetryLayer(tracer)
+    )
 
-    tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer().json())
-        .with(OpenTelemetryLayer::new(tracer))
-        .init();
-
-    provider
-}
+    RETURN provider
 ```
 
 With this setup, every `#[instrument]`-annotated function automatically becomes a span in a distributed trace. The `tracing-opentelemetry` bridge means your existing `tracing` instrumentation produces both logs and trace spans with zero additional code.

@@ -210,79 +210,52 @@ Rust has first-class support for docs-as-code through its built-in documentation
 
 Rust uses `///` for documenting the item that follows (functions, structs, enums, etc.) and `//!` for documenting the enclosing item (typically a module or crate root). Documentation is written in Markdown.
 
-```rust
-//! # my_math
-//!
-//! A small library for common math operations.
-//! This crate-level comment appears on the front page of the generated docs.
+```text
+// MODULE: my_math
+// A small library for common math operations.
+// This module-level comment appears on the front page of the generated docs.
 
-/// Computes the greatest common divisor of two positive integers
-/// using the Euclidean algorithm.
-///
-/// # Arguments
-///
-/// * `a` - The first positive integer
-/// * `b` - The second positive integer
-///
-/// # Examples
-///
-/// ```
-/// use my_math::gcd;
-///
-/// assert_eq!(gcd(54, 24), 6);
-/// assert_eq!(gcd(17, 1), 1);
-/// assert_eq!(gcd(0, 5), 5);
-/// ```
-///
-/// # Panics
-///
-/// This function does not panic.
-pub fn gcd(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 {
-        let temp = b;
-        b = a % b;
-        a = temp;
-    }
-    a
-}
+// Computes the greatest common divisor of two positive integers
+// using the Euclidean algorithm.
+//
+// Arguments:
+//   a - The first positive integer
+//   b - The second positive integer
+//
+// Examples:
+//   GCD(54, 24) = 6
+//   GCD(17, 1) = 1
+//   GCD(0, 5) = 5
+//
+FUNCTION GCD(a: unsigned integer, b: unsigned integer) → unsigned integer
+    WHILE b ≠ 0
+        temp ← b
+        b ← a MOD b
+        a ← temp
+    RETURN a
 
-/// A 2D point in Cartesian space.
-///
-/// # Examples
-///
-/// ```
-/// use my_math::Point;
-///
-/// let p = Point::new(3.0, 4.0);
-/// assert!((p.distance_to_origin() - 5.0).abs() < f64::EPSILON);
-/// ```
-pub struct Point {
-    /// The x-coordinate.
-    pub x: f64,
-    /// The y-coordinate.
-    pub y: f64,
-}
+// A 2D point in Cartesian space.
+//
+// Example:
+//   p ← NEW Point(3.0, 4.0)
+//   ASSERT |p.DISTANCE_TO_ORIGIN() - 5.0| < EPSILON
+//
+STRUCTURE Point
+    x: float    // The x-coordinate
+    y: float    // The y-coordinate
 
-impl Point {
-    /// Creates a new `Point` at the given coordinates.
-    pub fn new(x: f64, y: f64) -> Self {
-        Point { x, y }
-    }
+    // Creates a new Point at the given coordinates.
+    FUNCTION NEW(x: float, y: float) → Point
+        RETURN Point { x: x, y: y }
 
-    /// Returns the Euclidean distance from this point to the origin.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use my_math::Point;
-    ///
-    /// let p = Point::new(0.0, 0.0);
-    /// assert_eq!(p.distance_to_origin(), 0.0);
-    /// ```
-    pub fn distance_to_origin(&self) -> f64 {
-        (self.x.powi(2) + self.y.powi(2)).sqrt()
-    }
-}
+    // Returns the Euclidean distance from this point to the origin.
+    //
+    // Example:
+    //   p ← NEW Point(0.0, 0.0)
+    //   ASSERT p.DISTANCE_TO_ORIGIN() = 0.0
+    //
+    FUNCTION DISTANCE_TO_ORIGIN(self) → float
+        RETURN SQRT(self.x^2 + self.y^2)
 ```
 
 **Conventional `rustdoc` sections:** The `# Examples`, `# Panics`, `# Errors`, `# Safety`, and `# Arguments` headings are conventions recognized by the Rust community and rendered clearly in the generated HTML.
@@ -306,24 +279,18 @@ test result: ok. 4 passed; 0 failed; 0 ignored
 
 You can also hide setup lines from the rendered documentation while still compiling them, using `#`:
 
-```rust
-/// Parses a config string and returns the port number.
-///
-/// # Examples
-///
-/// ```
-/// # // This line is compiled but hidden in the rendered docs:
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let port = my_app::parse_port("port=8080")?;
-/// assert_eq!(port, 8080);
-/// # Ok(())
-/// # }
-/// ```
-pub fn parse_port(config: &str) -> Result<u16, Box<dyn std::error::Error>> {
-    // ...
-#     let val = config.split('=').nth(1).ok_or("missing value")?;
-#     Ok(val.parse()?)
-}
+```text
+// Parses a config string and returns the port number.
+//
+// Example:
+//   port ← PARSE_PORT("port=8080")
+//   ASSERT port = 8080
+//
+FUNCTION PARSE_PORT(config: string) → port number or Error
+    val ← SPLIT config BY '=' AND TAKE second part
+    IF val IS missing
+        RETURN Error("missing value")
+    RETURN PARSE val AS unsigned 16-bit integer
 ```
 
 **Generating HTML documentation:**

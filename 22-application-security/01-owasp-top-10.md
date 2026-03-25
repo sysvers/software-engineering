@@ -8,26 +8,21 @@ Users act outside their intended permissions. This includes missing authorizatio
 
 Broken access control has been the number-one risk since the 2021 revision. It is the most commonly exploited category because developers often rely on the UI to hide functionality rather than enforcing rules on the server.
 
-```rust
-use axum::{extract::Path, http::StatusCode, Extension, Json};
-
+```text
 // BAD: any authenticated user can view any order
-async fn get_order_bad(Path(order_id): Path<u64>) -> Result<Json<Order>, StatusCode> {
-    let order = db::get_order(order_id).await.map_err(|_| StatusCode::NOT_FOUND)?;
-    Ok(Json(order))
-}
+PROCEDURE GET_ORDER_BAD(order_id) → Result<Order>
+    order ← DB_GET_ORDER(order_id)
+    IF order NOT FOUND THEN RETURN Error(404 NOT FOUND)
+    RETURN Ok(order)
 
 // GOOD: verify the authenticated user owns the resource
-async fn get_order(
-    Path(order_id): Path<u64>,
-    Extension(current_user): Extension<AuthenticatedUser>,
-) -> Result<Json<Order>, StatusCode> {
-    let order = db::get_order(order_id).await.map_err(|_| StatusCode::NOT_FOUND)?;
-    if order.user_id != current_user.id {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    Ok(Json(order))
-}
+PROCEDURE GET_ORDER(order_id, current_user) → Result<Order>
+    order ← DB_GET_ORDER(order_id)
+    IF order NOT FOUND THEN RETURN Error(404 NOT FOUND)
+    IF order.user_id ≠ current_user.id THEN
+        RETURN Error(403 FORBIDDEN)
+    END IF
+    RETURN Ok(order)
 ```
 
 **Prevention:** Deny by default. Every endpoint must independently verify that the authenticated user is authorized for the requested action. Never rely on obscurity (unguessable IDs) as a substitute for authorization checks.
@@ -42,22 +37,17 @@ Storing passwords in plaintext, using broken hashing algorithms (MD5, SHA-1 for 
 
 Untrusted data sent to an interpreter as part of a command or query. SQL injection remains the most common form, but command injection, LDAP injection, and template injection also fall here.
 
-```rust
-use sqlx::PgPool;
-
+```text
 // BAD: string interpolation creates SQL injection
-async fn find_user_bad(pool: &PgPool, email: &str) -> Result<User, sqlx::Error> {
-    let query = format!("SELECT * FROM users WHERE email = '{}'", email);
-    sqlx::query_as::<_, User>(&query).fetch_one(pool).await
-}
+PROCEDURE FIND_USER_BAD(pool, email) → Result<User>
+    query ← "SELECT * FROM users WHERE email = '" + email + "'"
+    RETURN EXECUTE_QUERY(pool, query)
 
 // GOOD: parameterized query; the database driver handles escaping
-async fn find_user(pool: &PgPool, email: &str) -> Result<User, sqlx::Error> {
-    sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-}
+PROCEDURE FIND_USER(pool, email) → Result<User>
+    RETURN EXECUTE_QUERY(pool,
+        "SELECT * FROM users WHERE email = $1",
+        BIND email)
 ```
 
 **Prevention:** Always use parameterized queries. Never concatenate user input into SQL, shell commands, or template strings. In Rust, `sqlx` compile-time checked queries make this the path of least resistance.
@@ -110,26 +100,26 @@ No logging of authentication events. No alerting on suspicious activity. Breache
 
 The application fetches a URL supplied by the user without validating the destination, allowing access to internal services, cloud metadata endpoints (169.254.169.254), or other restricted resources.
 
-```rust
+```text
 // BAD: fetches any URL the user provides
-async fn fetch_url_bad(url: &str) -> Result<String, reqwest::Error> {
-    reqwest::get(url).await?.text().await
-}
+PROCEDURE FETCH_URL_BAD(url) → Result<String>
+    RETURN HTTP_GET(url).TEXT()
 
 // GOOD: validate against an allowlist of permitted hosts
-async fn fetch_url(url: &str) -> Result<String, AppError> {
-    let parsed = url::Url::parse(url).map_err(|_| AppError::InvalidUrl)?;
-    let host = parsed.host_str().ok_or(AppError::InvalidUrl)?;
+PROCEDURE FETCH_URL(url) → Result<String>
+    parsed ← PARSE_URL(url)
+    IF parsed IS INVALID THEN RETURN Error(InvalidUrl)
+    host ← parsed.HOST()
+    IF host IS NULL THEN RETURN Error(InvalidUrl)
 
-    let allowed_hosts = ["api.example.com", "cdn.example.com"];
-    if !allowed_hosts.contains(&host) {
-        return Err(AppError::ForbiddenHost);
-    }
+    allowed_hosts ← ["api.example.com", "cdn.example.com"]
+    IF host NOT IN allowed_hosts THEN
+        RETURN Error(ForbiddenHost)
+    END IF
 
     // Also block private IP ranges
-    let body = reqwest::get(url).await?.text().await?;
-    Ok(body)
-}
+    body ← HTTP_GET(url).TEXT()
+    RETURN Ok(body)
 ```
 
 **Prevention:** Validate and sanitize all user-supplied URLs. Use allowlists for permitted destinations. Block requests to private IP ranges and cloud metadata endpoints. Use network-level controls as a second layer.

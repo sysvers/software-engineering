@@ -46,37 +46,26 @@ Clients write to and read from multiple replicas. No single node is special. Con
 - W = number of nodes that must acknowledge a write
 - R = number of nodes that must respond to a read
 
-```rust
+```text
 /// Quorum parameters for a leaderless replication system.
-struct QuorumConfig {
-    num_replicas: usize,      // N
-    write_quorum: usize,      // W
-    read_quorum: usize,       // R
-}
+STRUCTURE QuorumConfig
+    num_replicas : Integer      // N
+    write_quorum : Integer      // W
+    read_quorum : Integer       // R
 
-impl QuorumConfig {
-    fn new(n: usize, w: usize, r: usize) -> Self {
-        assert!(w + r > n, "W + R must exceed N for strong consistency");
-        assert!(w <= n && r <= n, "Quorum sizes cannot exceed replica count");
-        Self {
-            num_replicas: n,
-            write_quorum: w,
-            read_quorum: r,
-        }
-    }
+PROCEDURE QuorumConfig.NEW(n, w, r) → QuorumConfig
+    ASSERT w + r > n, "W + R must exceed N for strong consistency"
+    ASSERT w ≤ n AND r ≤ n, "Quorum sizes cannot exceed replica count"
+    RETURN QuorumConfig { num_replicas ← n, write_quorum ← w, read_quorum ← r }
 
-    fn is_strongly_consistent(&self) -> bool {
-        self.write_quorum + self.read_quorum > self.num_replicas
-    }
+PROCEDURE QuorumConfig.IS_STRONGLY_CONSISTENT() → Boolean
+    RETURN self.write_quorum + self.read_quorum > self.num_replicas
 
-    fn write_succeeded(&self, acks: usize) -> bool {
-        acks >= self.write_quorum
-    }
+PROCEDURE QuorumConfig.WRITE_SUCCEEDED(acks) → Boolean
+    RETURN acks ≥ self.write_quorum
 
-    fn read_succeeded(&self, responses: usize) -> bool {
-        responses >= self.read_quorum
-    }
-}
+PROCEDURE QuorumConfig.READ_SUCCEEDED(responses) → Boolean
+    RETURN responses ≥ self.read_quorum
 ```
 
 **Repair mechanisms:**
@@ -107,60 +96,39 @@ A hash function maps keys to shards uniformly.
 
 Nodes are placed on a hash ring. Keys are assigned to the next node clockwise on the ring. Adding or removing a node only redistributes a fraction of keys.
 
-```rust
-use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
-
+```text
 /// A consistent hash ring supporting virtual nodes for better distribution.
-struct ConsistentHashRing {
-    ring: BTreeMap<u64, String>,
-    virtual_nodes_per_physical: usize,
-}
+STRUCTURE ConsistentHashRing
+    ring : SortedMap<Integer, String>
+    virtual_nodes_per_physical : Integer
 
-impl ConsistentHashRing {
-    fn new(virtual_nodes: usize) -> Self {
-        Self {
-            ring: BTreeMap::new(),
-            virtual_nodes_per_physical: virtual_nodes,
-        }
-    }
+PROCEDURE HASH_KEY(key) → Integer
+    RETURN HASH(key)
 
-    fn hash_key(key: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        hasher.finish()
-    }
+PROCEDURE ConsistentHashRing.ADD_NODE(node_id)
+    FOR i ← 0 TO self.virtual_nodes_per_physical - 1 DO
+        virtual_key ← node_id + "#" + i
+        hash ← HASH_KEY(virtual_key)
+        self.ring[hash] ← node_id
+    END FOR
 
-    fn add_node(&mut self, node_id: &str) {
-        for i in 0..self.virtual_nodes_per_physical {
-            let virtual_key = format!("{}#{}", node_id, i);
-            let hash = Self::hash_key(&virtual_key);
-            self.ring.insert(hash, node_id.to_string());
-        }
-    }
+PROCEDURE ConsistentHashRing.REMOVE_NODE(node_id)
+    FOR i ← 0 TO self.virtual_nodes_per_physical - 1 DO
+        virtual_key ← node_id + "#" + i
+        hash ← HASH_KEY(virtual_key)
+        DELETE self.ring[hash]
+    END FOR
 
-    fn remove_node(&mut self, node_id: &str) {
-        for i in 0..self.virtual_nodes_per_physical {
-            let virtual_key = format!("{}#{}", node_id, i);
-            let hash = Self::hash_key(&virtual_key);
-            self.ring.remove(&hash);
-        }
-    }
-
-    /// Find the node responsible for a given key.
-    fn get_node(&self, key: &str) -> Option<&String> {
-        if self.ring.is_empty() {
-            return None;
-        }
-        let hash = Self::hash_key(key);
-        self.ring
-            .range(hash..)
-            .next()
-            .or_else(|| self.ring.iter().next())
-            .map(|(_, node)| node)
-    }
-}
+/// Find the node responsible for a given key.
+PROCEDURE ConsistentHashRing.GET_NODE(key) → Optional<String>
+    IF self.ring IS EMPTY THEN RETURN NULL
+    hash ← HASH_KEY(key)
+    // Find the first node with a hash ≥ the key's hash (clockwise).
+    node ← FIRST ENTRY IN self.ring WHERE entry.key ≥ hash
+    IF node IS NULL THEN
+        node ← FIRST ENTRY IN self.ring    // Wrap around the ring.
+    END IF
+    RETURN node.value
 ```
 
 **Virtual nodes:** Each physical node maps to multiple positions on the ring (e.g., 150-256 virtual nodes). This smooths out the distribution and prevents a single node from receiving a disproportionate share of keys when another node leaves.

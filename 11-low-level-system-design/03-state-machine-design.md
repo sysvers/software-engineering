@@ -33,152 +33,102 @@ The simplest approach: use a Rust enum where each variant represents a state, wi
                           └─────────────┘
 ```
 
-```rust
-enum SubscriptionState {
-    Trial { expires_at: DateTime<Utc> },
-    Active { plan: Plan, renews_at: DateTime<Utc> },
-    Expired { expired_at: DateTime<Utc> },
-    Cancelled { cancelled_at: DateTime<Utc>, reason: String },
-}
+```text
+ENUM SubscriptionState
+    Trial { expires_at: DateTime }
+    Active { plan: Plan, renews_at: DateTime }
+    Expired { expired_at: DateTime }
+    Cancelled { cancelled_at: DateTime, reason: String }
 
-impl SubscriptionState {
-    fn activate(self, plan: Plan) -> Result<Self, SubscriptionError> {
-        match self {
-            Self::Trial { .. } => Ok(Self::Active {
-                plan,
-                renews_at: Utc::now() + Duration::days(30),
-            }),
-            _ => Err(SubscriptionError::InvalidTransition(
-                "Can only activate from trial"
-            )),
-        }
-    }
+FUNCTION ACTIVATE(state: SubscriptionState, plan: Plan) → Result<SubscriptionState, SubscriptionError>
+    MATCH state
+        CASE Trial { .. }:
+            RETURN Active { plan ← plan, renews_at ← NOW() + 30 days }
+        DEFAULT:
+            RETURN Error("Can only activate from trial")
 
-    fn cancel(self, reason: String) -> Result<Self, SubscriptionError> {
-        match self {
-            Self::Trial { .. } | Self::Active { .. } => Ok(Self::Cancelled {
-                cancelled_at: Utc::now(),
-                reason,
-            }),
-            _ => Err(SubscriptionError::InvalidTransition(
-                "Cannot cancel expired or already cancelled subscription"
-            )),
-        }
-    }
+FUNCTION CANCEL(state: SubscriptionState, reason: String) → Result<SubscriptionState, SubscriptionError>
+    MATCH state
+        CASE Trial { .. } OR Active { .. }:
+            RETURN Cancelled { cancelled_at ← NOW(), reason ← reason }
+        DEFAULT:
+            RETURN Error("Cannot cancel expired or already cancelled subscription")
 
-    fn expire(self) -> Result<Self, SubscriptionError> {
-        match self {
-            Self::Trial { .. } | Self::Active { .. } => Ok(Self::Expired {
-                expired_at: Utc::now(),
-            }),
-            _ => Err(SubscriptionError::InvalidTransition(
-                "Already expired or cancelled"
-            )),
-        }
-    }
-}
+FUNCTION EXPIRE(state: SubscriptionState) → Result<SubscriptionState, SubscriptionError>
+    MATCH state
+        CASE Trial { .. } OR Active { .. }:
+            RETURN Expired { expired_at ← NOW() }
+        DEFAULT:
+            RETURN Error("Already expired or cancelled")
 ```
 
 **Key design choice:** Transition methods consume `self` (take ownership). This means the old state no longer exists after a transition — you cannot accidentally use the old state. The caller must use the returned new state.
 
 ### Example: Order Lifecycle
 
-```rust
-enum OrderState {
-    Draft { items: Vec<LineItem> },
-    Submitted { items: Vec<LineItem>, submitted_at: DateTime<Utc> },
-    Paid { items: Vec<LineItem>, payment_id: PaymentId, paid_at: DateTime<Utc> },
-    Shipped { tracking_number: String, shipped_at: DateTime<Utc> },
-    Delivered { delivered_at: DateTime<Utc> },
-    Cancelled { reason: String, cancelled_at: DateTime<Utc> },
-}
+```text
+ENUM OrderState
+    Draft { items: List<LineItem> }
+    Submitted { items: List<LineItem>, submitted_at: DateTime }
+    Paid { items: List<LineItem>, payment_id: PaymentId, paid_at: DateTime }
+    Shipped { tracking_number: String, shipped_at: DateTime }
+    Delivered { delivered_at: DateTime }
+    Cancelled { reason: String, cancelled_at: DateTime }
 
-impl OrderState {
-    fn submit(self) -> Result<Self, OrderError> {
-        match self {
-            Self::Draft { items } if !items.is_empty() => Ok(Self::Submitted {
-                items,
-                submitted_at: Utc::now(),
-            }),
-            Self::Draft { items } if items.is_empty() => {
-                Err(OrderError::EmptyOrder)
-            }
-            _ => Err(OrderError::InvalidTransition("Can only submit from draft")),
-        }
-    }
+FUNCTION SUBMIT(state: OrderState) → Result<OrderState, OrderError>
+    MATCH state
+        CASE Draft { items } WHERE items IS NOT EMPTY:
+            RETURN Submitted { items ← items, submitted_at ← NOW() }
+        CASE Draft { items } WHERE items IS EMPTY:
+            RETURN Error(EmptyOrder)
+        DEFAULT:
+            RETURN Error("Can only submit from draft")
 
-    fn pay(self, payment_id: PaymentId) -> Result<Self, OrderError> {
-        match self {
-            Self::Submitted { items, .. } => Ok(Self::Paid {
-                items,
-                payment_id,
-                paid_at: Utc::now(),
-            }),
-            _ => Err(OrderError::InvalidTransition("Can only pay a submitted order")),
-        }
-    }
+FUNCTION PAY(state: OrderState, payment_id: PaymentId) → Result<OrderState, OrderError>
+    MATCH state
+        CASE Submitted { items, .. }:
+            RETURN Paid { items ← items, payment_id ← payment_id, paid_at ← NOW() }
+        DEFAULT:
+            RETURN Error("Can only pay a submitted order")
 
-    fn ship(self, tracking_number: String) -> Result<Self, OrderError> {
-        match self {
-            Self::Paid { .. } => Ok(Self::Shipped {
-                tracking_number,
-                shipped_at: Utc::now(),
-            }),
-            _ => Err(OrderError::InvalidTransition("Can only ship a paid order")),
-        }
-    }
-}
+FUNCTION SHIP(state: OrderState, tracking_number: String) → Result<OrderState, OrderError>
+    MATCH state
+        CASE Paid { .. }:
+            RETURN Shipped { tracking_number ← tracking_number, shipped_at ← NOW() }
+        DEFAULT:
+            RETURN Error("Can only ship a paid order")
 ```
 
 ## The Typestate Pattern
 
 The typestate pattern goes further: it makes invalid transitions a **compile-time error** rather than a runtime error. Each state is a separate type, and methods only exist on valid source states.
 
-```rust
-struct Connection<S: ConnectionState> {
-    addr: SocketAddr,
-    _state: PhantomData<S>,
-}
+```text
+RECORD Connection<S: ConnectionState>
+    addr: SocketAddr
 
-// State types — zero-sized, exist only for the type system
-struct Disconnected;
-struct Connecting;
-struct Connected;
-
-// Trait to mark valid states
-trait ConnectionState {}
-impl ConnectionState for Disconnected {}
-impl ConnectionState for Connecting {}
-impl ConnectionState for Connected {}
+// State types -- zero-sized, exist only for the type system
+STATE TYPE Disconnected
+STATE TYPE Connecting
+STATE TYPE Connected
 
 // Methods only available in specific states
-impl Connection<Disconnected> {
-    fn connect(self) -> Connection<Connecting> {
-        // Start connection attempt
-        Connection { addr: self.addr, _state: PhantomData }
-    }
-}
+FUNCTION CONNECT(conn: Connection<Disconnected>) → Connection<Connecting>
+    // Start connection attempt
+    RETURN Connection<Connecting> { addr ← conn.addr }
 
-impl Connection<Connecting> {
-    fn on_connected(self) -> Connection<Connected> {
-        Connection { addr: self.addr, _state: PhantomData }
-    }
+FUNCTION ON_CONNECTED(conn: Connection<Connecting>) → Connection<Connected>
+    RETURN Connection<Connected> { addr ← conn.addr }
 
-    fn on_failed(self) -> Connection<Disconnected> {
-        Connection { addr: self.addr, _state: PhantomData }
-    }
-}
+FUNCTION ON_FAILED(conn: Connection<Connecting>) → Connection<Disconnected>
+    RETURN Connection<Disconnected> { addr ← conn.addr }
 
-impl Connection<Connected> {
-    fn send(&self, data: &[u8]) -> Result<(), SendError> {
-        // Can only send when connected — enforced by the type system
-        todo!()
-    }
+FUNCTION SEND(conn: Connection<Connected>, data: Bytes) → Result<Void, SendError>
+    // Can only send when connected -- enforced by the type system
+    // ...
 
-    fn disconnect(self) -> Connection<Disconnected> {
-        Connection { addr: self.addr, _state: PhantomData }
-    }
-}
+FUNCTION DISCONNECT(conn: Connection<Connected>) → Connection<Disconnected>
+    RETURN Connection<Disconnected> { addr ← conn.addr }
 ```
 
 With this design, calling `.send()` on a `Connection<Disconnected>` is a compile error. You cannot forget to check the connection state.
@@ -200,16 +150,13 @@ Key lessons from Discord's approach:
 
 State machines need to survive process restarts. Serialize the current state to the database:
 
-```rust
-// Store as a tagged enum in the database
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "state")]
-enum SubscriptionState {
-    Trial { expires_at: DateTime<Utc> },
-    Active { plan: Plan, renews_at: DateTime<Utc> },
-    Expired { expired_at: DateTime<Utc> },
-    Cancelled { cancelled_at: DateTime<Utc>, reason: String },
-}
+```text
+// Store as a tagged enum in the database (serializable)
+ENUM SubscriptionState [tagged by "state"]
+    Trial { expires_at: DateTime }
+    Active { plan: Plan, renews_at: DateTime }
+    Expired { expired_at: DateTime }
+    Cancelled { cancelled_at: DateTime, reason: String }
 
 // In the database: {"state": "Active", "plan": "pro", "renews_at": "2026-04-23T00:00:00Z"}
 ```

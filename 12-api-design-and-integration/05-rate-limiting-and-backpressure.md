@@ -170,137 +170,99 @@ Exponential backoff with jitter:
 
 ### Token Bucket Rate Limiter
 
-```rust
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+```text
+STRUCTURE TokenBucket:
+    capacity ← integer
+    tokens ← float
+    refill_rate ← float  // tokens per second
+    last_refill ← timestamp
 
-pub struct TokenBucket {
-    capacity: u32,
-    tokens: f64,
-    refill_rate: f64,  // tokens per second
-    last_refill: Instant,
-}
-
-impl TokenBucket {
-    pub fn new(capacity: u32, refill_rate: f64) -> Self {
-        Self {
-            capacity,
-            tokens: capacity as f64,
-            refill_rate,
-            last_refill: Instant::now(),
-        }
+PROCEDURE NEW_TOKEN_BUCKET(capacity, refill_rate):
+    RETURN TokenBucket {
+        capacity ← capacity,
+        tokens ← capacity,
+        refill_rate ← refill_rate,
+        last_refill ← NOW()
     }
 
-    pub fn try_acquire(&mut self, cost: u32) -> bool {
-        self.refill();
-        if self.tokens >= cost as f64 {
-            self.tokens -= cost as f64;
-            true
-        } else {
-            false
-        }
-    }
+PROCEDURE TRY_ACQUIRE(bucket, cost):
+    REFILL(bucket)
+    IF bucket.tokens ≥ cost THEN
+        bucket.tokens ← bucket.tokens - cost
+        RETURN true
+    ELSE
+        RETURN false
 
-    pub fn remaining(&self) -> u32 {
-        self.tokens as u32
-    }
+PROCEDURE REMAINING(bucket):
+    RETURN FLOOR(bucket.tokens)
 
-    fn refill(&mut self) {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * self.refill_rate)
-            .min(self.capacity as f64);
-        self.last_refill = now;
-    }
-}
+PROCEDURE REFILL(bucket):
+    now ← NOW()
+    elapsed ← SECONDS_SINCE(bucket.last_refill, now)
+    bucket.tokens ← MIN(bucket.tokens + elapsed * bucket.refill_rate, bucket.capacity)
+    bucket.last_refill ← now
 ```
 
 ### axum Rate Limiting Middleware
 
-```rust
-use axum::{
-    extract::ConnectInfo,
-    http::{Request, StatusCode, HeaderMap, HeaderValue},
-    middleware::Next,
-    response::{IntoResponse, Response},
-};
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+```text
+// Rate limit store: shared map of client key → TokenBucket
 
-type RateLimitStore = Arc<Mutex<HashMap<String, TokenBucket>>>;
+PROCEDURE RATE_LIMIT_MIDDLEWARE(client_address, request, next):
+    store ← GET rate limit store FROM request extensions
+    key ← client_address.ip AS string
 
-pub async fn rate_limit_middleware(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    request: Request<axum::body::Body>,
-    next: Next,
-) -> Response {
-    let store: &RateLimitStore = request.extensions().get().unwrap();
-    let key = addr.ip().to_string();
+    LOCK store
+    bucket ← LOOKUP key IN store, OR INSERT NEW TokenBucket(capacity=100, refill_rate=10.0)
 
-    let mut store = store.lock().await;
-    let bucket = store
-        .entry(key)
-        .or_insert_with(|| TokenBucket::new(100, 10.0)); // 100 capacity, 10/sec refill
+    IF TRY_ACQUIRE(bucket, 1) THEN
+        remaining ← REMAINING(bucket)
+        UNLOCK store  // Release lock before processing
 
-    if bucket.try_acquire(1) {
-        let remaining = bucket.remaining();
-        drop(store); // Release lock before processing
-
-        let mut response = next.run(request).await;
+        response ← FORWARD request TO next handler
 
         // Add rate limit headers to every response
-        let headers = response.headers_mut();
-        headers.insert("X-RateLimit-Limit", HeaderValue::from_static("100"));
-        headers.insert(
-            "X-RateLimit-Remaining",
-            HeaderValue::from(remaining),
-        );
+        SET response header "X-RateLimit-Limit" ← "100"
+        SET response header "X-RateLimit-Remaining" ← remaining
 
-        response
-    } else {
-        drop(store);
+        RETURN response
+    ELSE
+        UNLOCK store
 
-        let mut headers = HeaderMap::new();
-        headers.insert("Retry-After", HeaderValue::from_static("10"));
-        headers.insert("X-RateLimit-Limit", HeaderValue::from_static("100"));
-        headers.insert("X-RateLimit-Remaining", HeaderValue::from_static("0"));
+        SET headers:
+            "Retry-After" ← "10"
+            "X-RateLimit-Limit" ← "100"
+            "X-RateLimit-Remaining" ← "0"
 
-        (StatusCode::TOO_MANY_REQUESTS, headers, "Rate limit exceeded").into_response()
-    }
-}
+        RETURN (429 TOO MANY REQUESTS, headers, "Rate limit exceeded")
 ```
 
 ### Distributed Rate Limiting with Redis
 
 For multi-instance deployments, rate limiting must be centralized. Redis is the standard choice:
 
-```rust
+```text
 // Sliding window rate limit using Redis
 // Lua script for atomicity
-const RATE_LIMIT_SCRIPT: &str = r#"
-    local key = KEYS[1]
-    local limit = tonumber(ARGV[1])
-    local window = tonumber(ARGV[2])
-    local now = tonumber(ARGV[3])
+REDIS_SCRIPT RATE_LIMIT_SCRIPT:
+    key ← KEYS[1]
+    limit ← TO_NUMBER(ARGV[1])
+    window ← TO_NUMBER(ARGV[2])
+    now ← TO_NUMBER(ARGV[3])
 
-    -- Remove expired entries
-    redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+    // Remove expired entries
+    REDIS ZREMRANGEBYSCORE key, 0, now - window
 
-    -- Count current requests
-    local count = redis.call('ZCARD', key)
+    // Count current requests
+    count ← REDIS ZCARD key
 
-    if count < limit then
-        -- Add current request
-        redis.call('ZADD', key, now, now .. '-' .. math.random(1000000))
-        redis.call('EXPIRE', key, window)
-        return {1, limit - count - 1}  -- allowed, remaining
-    else
-        return {0, 0}  -- rejected, 0 remaining
-    end
-"#;
+    IF count < limit THEN
+        // Add current request
+        REDIS ZADD key, now, now + "-" + RANDOM(1000000)
+        REDIS EXPIRE key, window
+        RETURN {1, limit - count - 1}  // allowed, remaining
+    ELSE
+        RETURN {0, 0}  // rejected, 0 remaining
 ```
 
 This uses a Redis sorted set where the score is the request timestamp. Entries outside the window are removed, and the set's cardinality gives the request count. The Lua script ensures atomicity.

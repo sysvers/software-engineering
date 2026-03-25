@@ -113,24 +113,18 @@ Logging is often the primary debugging tool, especially in production where you 
 
 Structured logs (JSON format) are searchable, parseable, and queryable — unlike unstructured text logs.
 
-```rust
-use tracing::{info, error, instrument};
+```text
+// Instrumented for tracing
+ASYNC FUNCTION PROCESS_ORDER(order_id: unsigned integer, pool: PgPool) -> void or OrderError
+    LOG INFO order_id, "Processing order"
 
-#[instrument(skip(pool))]
-async fn process_order(order_id: u64, pool: &PgPool) -> Result<(), OrderError> {
-    info!(order_id, "Processing order");
-
-    match charge_payment(order_id, pool).await {
-        Ok(transaction_id) => {
-            info!(order_id, transaction_id, "Payment successful");
-            Ok(())
-        }
-        Err(e) => {
-            error!(order_id, error = %e, "Payment failed");
-            Err(e.into())
-        }
-    }
-}
+    MATCH CHARGE_PAYMENT(order_id, pool)
+        CASE Ok(transaction_id):
+            LOG INFO order_id, transaction_id, "Payment successful"
+            RETURN Ok
+        CASE Err(e):
+            LOG ERROR order_id, error: e, "Payment failed"
+            RETURN Err(e)
 ```
 
 **Output (structured JSON):**

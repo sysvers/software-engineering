@@ -279,39 +279,25 @@ GraphQL's flexibility creates unique security challenges:
 
 ## Rust: async-graphql Example
 
-```rust
-use async_graphql::*;
+```text
+STRUCTURE User:
+    id ← ID
+    name ← string
+    email ← string
 
-#[derive(SimpleObject)]
-struct User {
-    id: ID,
-    name: String,
-    email: String,
-}
+OBJECT QueryRoot:
 
-struct QueryRoot;
+    PROCEDURE USER(context, id):
+        db ← GET Database FROM context
+        RETURN AWAIT db.FIND_USER(id)
 
-#[Object]
-impl QueryRoot {
-    async fn user(&self, ctx: &Context<'_>, id: ID) -> Result<Option<User>> {
-        let db = ctx.data::<Database>()?;
-        Ok(db.find_user(&id).await?)
-    }
-
-    async fn posts(
-        &self,
-        ctx: &Context<'_>,
-        first: Option<i32>,
-        after: Option<String>,
-    ) -> Result<Connection<String, Post>> {
+    PROCEDURE POSTS(context, first, after):
         // Relay-style cursor pagination built-in
-        todo!()
-    }
-}
+        NOT YET IMPLEMENTED
 
-let schema = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
-    .limit_depth(10)
-    .limit_complexity(200)
-    .data(database)
-    .finish();
+schema ← BUILD_SCHEMA(QueryRoot, MutationRoot, SubscriptionRoot)
+    SET max depth ← 10
+    SET max complexity ← 200
+    SET data ← database
+    FINISH
 ```

@@ -92,66 +92,45 @@ An older but battle-tested coordination service. Used by Kafka (pre-KRaft), Hado
 
 A simple in-memory service registry with TTL-based health tracking:
 
-```rust
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
-
+```text
 /// Represents a single service instance in the registry.
-#[derive(Debug, Clone)]
-struct ServiceInstance {
-    id: String,
-    host: String,
-    port: u16,
-    last_heartbeat: Instant,
-}
+STRUCTURE ServiceInstance
+    id : String
+    host : String
+    port : Integer
+    last_heartbeat : Timestamp
 
 /// A simple in-memory service registry with TTL-based health tracking.
-struct ServiceRegistry {
-    services: Arc<RwLock<HashMap<String, Vec<ServiceInstance>>>>,
-    ttl: Duration,
-}
+STRUCTURE ServiceRegistry
+    services : ThreadSafe<Map<String, List<ServiceInstance>>>
+    ttl : Duration
 
-impl ServiceRegistry {
-    fn new(ttl: Duration) -> Self {
-        Self {
-            services: Arc::new(RwLock::new(HashMap::new())),
-            ttl,
-        }
-    }
+PROCEDURE ServiceRegistry.NEW(ttl) → ServiceRegistry
+    RETURN ServiceRegistry { services ← EMPTY MAP, ttl ← ttl }
 
-    /// Register a service instance under a given service name.
-    fn register(&self, service_name: &str, instance: ServiceInstance) {
-        let mut map = self.services.write().unwrap();
-        map.entry(service_name.to_string())
-            .or_insert_with(Vec::new)
-            .push(instance);
-    }
+/// Register a service instance under a given service name.
+PROCEDURE ServiceRegistry.REGISTER(service_name, instance)
+    ACQUIRE WRITE LOCK ON self.services
+    IF service_name NOT IN self.services THEN
+        self.services[service_name] ← EMPTY LIST
+    END IF
+    APPEND instance TO self.services[service_name]
 
-    /// Discover healthy instances for a given service name.
-    fn discover(&self, service_name: &str) -> Vec<ServiceInstance> {
-        let map = self.services.read().unwrap();
-        let now = Instant::now();
-        map.get(service_name)
-            .map(|instances| {
-                instances
-                    .iter()
-                    .filter(|inst| now.duration_since(inst.last_heartbeat) < self.ttl)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
+/// Discover healthy instances for a given service name.
+PROCEDURE ServiceRegistry.DISCOVER(service_name) → List<ServiceInstance>
+    ACQUIRE READ LOCK ON self.services
+    now ← CURRENT_TIME()
+    instances ← self.services[service_name]
+    IF instances IS NULL THEN RETURN EMPTY LIST
+    RETURN FILTER instances WHERE (now - inst.last_heartbeat) < self.ttl
 
-    /// Remove stale instances that have not sent a heartbeat within the TTL.
-    fn evict_stale(&self) {
-        let mut map = self.services.write().unwrap();
-        let now = Instant::now();
-        for instances in map.values_mut() {
-            instances.retain(|inst| now.duration_since(inst.last_heartbeat) < self.ttl);
-        }
-    }
-}
+/// Remove stale instances that have not sent a heartbeat within the TTL.
+PROCEDURE ServiceRegistry.EVICT_STALE()
+    ACQUIRE WRITE LOCK ON self.services
+    now ← CURRENT_TIME()
+    FOR EACH instances IN self.services.VALUES() DO
+        RETAIN instances WHERE (now - inst.last_heartbeat) < self.ttl
+    END FOR
 ```
 
 ---

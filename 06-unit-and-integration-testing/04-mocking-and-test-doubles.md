@@ -14,21 +14,17 @@ A stub returns pre-programmed responses. It does not verify how it was called �
 
 Use a stub when your test needs a dependency to return a specific value but does not care how many times or in what order it was called.
 
-```rust
-struct StubPriceService;
+```text
+STRUCTURE StubPriceService
 
-impl PriceService for StubPriceService {
-    fn get_price(&self, _product_id: &str) -> Result<f64, PriceError> {
-        Ok(29.99) // Always returns the same price
-    }
-}
+// Implement PriceService for StubPriceService
+    FUNCTION GET_PRICE(product_id: string) -> float or PriceError
+        RETURN Ok(29.99)  // Always returns the same price
 
-#[test]
-fn order_total_uses_price_from_service() {
-    let service = StubPriceService;
-    let total = calculate_order_total(&service, "widget", 3);
-    assert!((total - 89.97).abs() < 0.01);
-}
+TEST order_total_uses_price_from_service
+    service <- StubPriceService
+    total <- CALCULATE_ORDER_TOTAL(service, "widget", 3)
+    ASSERT |total - 89.97| < 0.01
 ```
 
 ### Mocks
@@ -37,29 +33,21 @@ A mock verifies that specific interactions occurred. It records calls and lets y
 
 Use a mock when the *side effect* is the behavior you are testing — for example, verifying that a notification was sent.
 
-```rust
-struct MockNotifier {
-    calls: RefCell<Vec<(String, String)>>,
-}
+```text
+STRUCTURE MockNotifier
+    calls: list of (string, string)
 
-impl MockNotifier {
-    fn new() -> Self {
-        MockNotifier { calls: RefCell::new(vec![]) }
-    }
+    FUNCTION NEW() -> MockNotifier
+        RETURN MockNotifier { calls: empty list }
 
-    fn assert_called_once_with(&self, user_id: &str, message: &str) {
-        let calls = self.calls.borrow();
-        assert_eq!(calls.len(), 1, "Expected exactly one call, got {}", calls.len());
-        assert_eq!(calls[0].0, user_id);
-        assert_eq!(calls[0].1, message);
-    }
-}
+    FUNCTION ASSERT_CALLED_ONCE_WITH(user_id: string, message: string)
+        ASSERT calls.length = 1, "Expected exactly one call, got " + calls.length
+        ASSERT calls[0].first = user_id
+        ASSERT calls[0].second = message
 
-impl Notifier for MockNotifier {
-    fn notify(&self, user_id: &str, message: &str) {
-        self.calls.borrow_mut().push((user_id.to_string(), message.to_string()));
-    }
-}
+// Implement Notifier for MockNotifier
+    FUNCTION NOTIFY(user_id: string, message: string)
+        APPEND (user_id, message) TO self.calls
 ```
 
 ### Fakes
@@ -68,47 +56,39 @@ A fake is a working but simplified implementation. It has real behavior, but tak
 
 Fakes are more capable than stubs — they maintain state and can handle a variety of inputs without pre-programming each response.
 
-```rust
-struct InMemoryUserRepository {
-    users: RefCell<HashMap<u64, User>>,
-    next_id: Cell<u64>,
-}
+```text
+STRUCTURE InMemoryUserRepository
+    users: map of (id -> User)
+    next_id: counter
 
-impl UserRepository for InMemoryUserRepository {
-    fn create(&self, name: &str, email: &str) -> Result<User, RepoError> {
-        let id = self.next_id.get();
-        self.next_id.set(id + 1);
-        let user = User { id, name: name.to_string(), email: email.to_string() };
-        self.users.borrow_mut().insert(id, user.clone());
-        Ok(user)
-    }
+// Implement UserRepository for InMemoryUserRepository
+    FUNCTION CREATE(name: string, email: string) -> User or RepoError
+        id <- self.next_id
+        self.next_id <- id + 1
+        user <- User { id, name, email }
+        self.users[id] <- user
+        RETURN Ok(user)
 
-    fn find_by_id(&self, id: u64) -> Result<Option<User>, RepoError> {
-        Ok(self.users.borrow().get(&id).cloned())
-    }
+    FUNCTION FIND_BY_ID(id: unsigned integer) -> optional User or RepoError
+        RETURN Ok(self.users.GET(id))
 
-    fn find_by_email(&self, email: &str) -> Result<Option<User>, RepoError> {
-        Ok(self.users.borrow().values().find(|u| u.email == email).cloned())
-    }
-}
+    FUNCTION FIND_BY_EMAIL(email: string) -> optional User or RepoError
+        RETURN Ok(FIND user IN self.users.values WHERE user.email = email)
 ```
 
 ### Spies
 
 A spy wraps a real or fake implementation and records every call made to it. You use the spy when you want the real behavior *and* want to verify what was called.
 
-```rust
-struct SpyHttpClient {
-    inner: RealHttpClient,
-    requests: RefCell<Vec<(String, String)>>, // (method, url)
-}
+```text
+STRUCTURE SpyHttpClient
+    inner: RealHttpClient
+    requests: list of (method: string, url: string)
 
-impl HttpClient for SpyHttpClient {
-    fn request(&self, method: &str, url: &str) -> Result<Response, HttpError> {
-        self.requests.borrow_mut().push((method.to_string(), url.to_string()));
-        self.inner.request(method, url)
-    }
-}
+// Implement HttpClient for SpyHttpClient
+    FUNCTION REQUEST(method: string, url: string) -> Response or HttpError
+        APPEND (method, url) TO self.requests
+        RETURN self.inner.REQUEST(method, url)
 ```
 
 ## Trait-Based Dependency Injection in Rust
@@ -119,55 +99,39 @@ Rust does not need a dependency injection framework. The language's trait system
 2. Accept the trait (via generics or `dyn Trait`) in your function or struct.
 3. Provide a real implementation for production and a test double for tests.
 
-```rust
-// Step 1: Define the dependency as a trait
-trait Clock {
-    fn now(&self) -> DateTime<Utc>;
-}
+```text
+// Step 1: Define the dependency as an interface
+INTERFACE Clock
+    FUNCTION NOW() -> DateTime
 
 // Step 2: Production implementation
-struct SystemClock;
+STRUCTURE SystemClock
+// Implement Clock for SystemClock
+    FUNCTION NOW() -> DateTime
+        RETURN current UTC time
 
-impl Clock for SystemClock {
-    fn now(&self) -> DateTime<Utc> {
-        Utc::now()
-    }
-}
-
-// Step 3: Accept the trait in your business logic
-fn is_market_open(clock: &dyn Clock) -> bool {
-    let now = clock.now();
-    let hour = now.hour();
+// Step 3: Accept the interface in your business logic
+FUNCTION IS_MARKET_OPEN(clock: Clock) -> boolean
+    now <- clock.NOW()
+    hour <- now.hour
     // NYSE hours: 9:30 AM - 4:00 PM ET (simplified)
-    hour >= 9 && hour < 16
-}
+    RETURN hour ≥ 9 AND hour < 16
 
 // Step 4: Test with a controllable double
-struct FixedClock {
-    time: DateTime<Utc>,
-}
+STRUCTURE FixedClock
+    time: DateTime
 
-impl Clock for FixedClock {
-    fn now(&self) -> DateTime<Utc> {
-        self.time
-    }
-}
+// Implement Clock for FixedClock
+    FUNCTION NOW() -> DateTime
+        RETURN self.time
 
-#[test]
-fn market_is_open_during_trading_hours() {
-    let clock = FixedClock {
-        time: Utc.with_ymd_and_hms(2025, 6, 10, 14, 30, 0).unwrap(),
-    };
-    assert!(is_market_open(&clock));
-}
+TEST market_is_open_during_trading_hours
+    clock <- FixedClock { time: 2025-06-10 14:30:00 UTC }
+    ASSERT IS_MARKET_OPEN(clock) = true
 
-#[test]
-fn market_is_closed_at_night() {
-    let clock = FixedClock {
-        time: Utc.with_ymd_and_hms(2025, 6, 10, 22, 0, 0).unwrap(),
-    };
-    assert!(!is_market_open(&clock));
-}
+TEST market_is_closed_at_night
+    clock <- FixedClock { time: 2025-06-10 22:00:00 UTC }
+    ASSERT IS_MARKET_OPEN(clock) = false
 ```
 
 This pattern works for any external dependency: HTTP clients, email senders, file systems, random number generators, payment gateways. No framework, no macros, no runtime overhead.
@@ -187,67 +151,56 @@ mockall = "0.13"
 
 ### Basic Usage
 
-```rust
-use mockall::automock;
+```text
+// Auto-generate mock implementation
+INTERFACE PaymentGateway
+    FUNCTION CHARGE(amount: float, currency: string) -> string or PaymentError
+    FUNCTION REFUND(transaction_id: string) -> void or PaymentError
 
-#[automock]
-trait PaymentGateway {
-    fn charge(&self, amount: f64, currency: &str) -> Result<String, PaymentError>;
-    fn refund(&self, transaction_id: &str) -> Result<(), PaymentError>;
-}
+TEST successful_payment_returns_transaction_id
+    mock <- NEW MockPaymentGateway()
+    mock.EXPECT_CHARGE()
+        .WITH(99.99, "USD")
+        .TIMES(1)
+        .RETURNING(Ok("txn_abc123"))
 
-#[test]
-fn successful_payment_returns_transaction_id() {
-    let mut mock = MockPaymentGateway::new();
-    mock.expect_charge()
-        .with(eq(99.99), eq("USD"))
-        .times(1)
-        .returning(|_, _| Ok("txn_abc123".to_string()));
+    result <- PROCESS_ORDER(mock, 99.99, "USD")
+    ASSERT result.transaction_id = "txn_abc123"
 
-    let result = process_order(&mock, 99.99, "USD");
-    assert_eq!(result.unwrap().transaction_id, "txn_abc123");
-}
+TEST failed_payment_propagates_error
+    mock <- NEW MockPaymentGateway()
+    mock.EXPECT_CHARGE()
+        .RETURNING(Err(PaymentError::Declined))
 
-#[test]
-fn failed_payment_propagates_error() {
-    let mut mock = MockPaymentGateway::new();
-    mock.expect_charge()
-        .returning(|_, _| Err(PaymentError::Declined));
-
-    let result = process_order(&mock, 99.99, "USD");
-    assert!(matches!(result, Err(OrderError::PaymentFailed(_))));
-}
+    result <- PROCESS_ORDER(mock, 99.99, "USD")
+    ASSERT result IS Err(OrderError::PaymentFailed(_))
 ```
 
 ### Sequence Expectations
 
 Verify that methods are called in a specific order:
 
-```rust
-use mockall::Sequence;
+```text
+TEST checkout_validates_then_charges_then_confirms
+    seq <- NEW Sequence()
+    mock <- NEW MockCheckoutService()
 
-#[test]
-fn checkout_validates_then_charges_then_confirms() {
-    let mut seq = Sequence::new();
-    let mut mock = MockCheckoutService::new();
+    mock.EXPECT_VALIDATE()
+        .TIMES(1)
+        .IN_SEQUENCE(seq)
+        .RETURNING(Ok)
 
-    mock.expect_validate()
-        .times(1)
-        .in_sequence(&mut seq)
-        .returning(|_| Ok(()));
+    mock.EXPECT_CHARGE()
+        .TIMES(1)
+        .IN_SEQUENCE(seq)
+        .RETURNING(Ok("txn_123"))
 
-    mock.expect_charge()
-        .times(1)
-        .in_sequence(&mut seq)
-        .returning(|_| Ok("txn_123".into()));
+    mock.EXPECT_SEND_CONFIRMATION()
+        .TIMES(1)
+        .IN_SEQUENCE(seq)
+        .RETURNING(Ok)
 
-    mock.expect_send_confirmation()
-        .times(1)
-        .in_sequence(&mut seq)
-        .returning(|_| Ok(()));
-
-    checkout(&mock, &order).unwrap();
-}
+    CHECKOUT(mock, order)
 ```
 
 ## When to Mock vs. Use Real Implementations
@@ -277,77 +230,56 @@ Ask: "Is this dependency something I *own* or something *external*?" Mock extern
 
 Consider a service that sends notifications when an order ships. It depends on an email sender, an SMS sender, and a user preferences store.
 
-```rust
-trait EmailSender {
-    fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), SendError>;
-}
+```text
+INTERFACE EmailSender
+    FUNCTION SEND(to: string, subject: string, body: string) -> void or SendError
 
-trait SmsSender {
-    fn send(&self, phone: &str, message: &str) -> Result<(), SendError>;
-}
+INTERFACE SmsSender
+    FUNCTION SEND(phone: string, message: string) -> void or SendError
 
-trait UserPreferences {
-    fn get_preference(&self, user_id: u64) -> Result<NotificationPref, PrefError>;
-}
+INTERFACE UserPreferences
+    FUNCTION GET_PREFERENCE(user_id: unsigned integer) -> NotificationPref or PrefError
 
-fn notify_shipment(
-    user_id: u64,
-    order_id: &str,
-    prefs: &dyn UserPreferences,
-    email: &dyn EmailSender,
-    sms: &dyn SmsSender,
-) -> Result<(), NotifyError> {
-    let pref = prefs.get_preference(user_id)?;
-    match pref {
-        NotificationPref::Email(addr) => {
-            email.send(&addr, "Your order shipped!", &format!("Order {} is on its way.", order_id))?;
-        }
-        NotificationPref::Sms(phone) => {
-            sms.send(&phone, &format!("Order {} shipped!", order_id))?;
-        }
-        NotificationPref::Both(addr, phone) => {
-            email.send(&addr, "Your order shipped!", &format!("Order {} is on its way.", order_id))?;
-            sms.send(&phone, &format!("Order {} shipped!", order_id))?;
-        }
-    }
-    Ok(())
-}
+FUNCTION NOTIFY_SHIPMENT(user_id, order_id, prefs, email, sms) -> void or NotifyError
+    pref <- prefs.GET_PREFERENCE(user_id)?
+    MATCH pref
+        CASE NotificationPref::Email(addr):
+            email.SEND(addr, "Your order shipped!", "Order " + order_id + " is on its way.")?
+        CASE NotificationPref::Sms(phone):
+            sms.SEND(phone, "Order " + order_id + " shipped!")?
+        CASE NotificationPref::Both(addr, phone):
+            email.SEND(addr, "Your order shipped!", "Order " + order_id + " is on its way.")?
+            sms.SEND(phone, "Order " + order_id + " shipped!")?
+    RETURN Ok
 ```
 
 Testing this with hand-written fakes:
 
-```rust
-struct FakePrefs(NotificationPref);
+```text
+STRUCTURE FakePrefs(pref: NotificationPref)
 
-impl UserPreferences for FakePrefs {
-    fn get_preference(&self, _user_id: u64) -> Result<NotificationPref, PrefError> {
-        Ok(self.0.clone())
-    }
-}
+// Implement UserPreferences for FakePrefs
+    FUNCTION GET_PREFERENCE(user_id) -> NotificationPref or PrefError
+        RETURN Ok(self.pref)
 
-struct RecordingEmailSender {
-    sent: RefCell<Vec<(String, String, String)>>,
-}
+STRUCTURE RecordingEmailSender
+    sent: list of (to: string, subject: string, body: string)
 
-impl EmailSender for RecordingEmailSender {
-    fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), SendError> {
-        self.sent.borrow_mut().push((to.into(), subject.into(), body.into()));
-        Ok(())
-    }
-}
+// Implement EmailSender for RecordingEmailSender
+    FUNCTION SEND(to, subject, body) -> void or SendError
+        APPEND (to, subject, body) TO self.sent
+        RETURN Ok
 
-#[test]
-fn email_preference_sends_email_only() {
-    let prefs = FakePrefs(NotificationPref::Email("alice@example.com".into()));
-    let email = RecordingEmailSender { sent: RefCell::new(vec![]) };
-    let sms = RecordingSmsSender { sent: RefCell::new(vec![]) };
+TEST email_preference_sends_email_only
+    prefs <- FakePrefs(NotificationPref::Email("alice@example.com"))
+    email <- RecordingEmailSender { sent: empty list }
+    sms <- RecordingSmsSender { sent: empty list }
 
-    notify_shipment(1, "ORD-42", &prefs, &email, &sms).unwrap();
+    NOTIFY_SHIPMENT(1, "ORD-42", prefs, email, sms)
 
-    assert_eq!(email.sent.borrow().len(), 1);
-    assert_eq!(email.sent.borrow()[0].0, "alice@example.com");
-    assert_eq!(sms.sent.borrow().len(), 0); // No SMS sent
-}
+    ASSERT email.sent.length = 1
+    ASSERT email.sent[0].to = "alice@example.com"
+    ASSERT sms.sent.length = 0  // No SMS sent
 ```
 
 Each test double here is simple — a few lines of code, no framework. For a trait with two methods, hand-writing a fake is faster than learning a mocking framework's API.

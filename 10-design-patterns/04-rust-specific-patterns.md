@@ -12,101 +12,84 @@ Wrap a primitive type in a single-field struct to give it a distinct type identi
 
 ### The Problem
 
-```rust
+```text
 // Without newtype -- dangerously easy to mix up
-fn transfer(from: u64, to: u64, amount: u64) {
-    println!("Transferring {amount} from {from} to {to}");
-}
+FUNCTION TRANSFER(from: Integer, to: Integer, amount: Integer)
+    PRINT "Transferring " + amount + " from " + from + " to " + to
 
 // This compiles and runs. It is completely wrong.
-let user_id = 42;
-let account_id = 100;
-let cents = 5000;
+user_id ← 42
+account_id ← 100
+cents ← 5000
 
-transfer(cents, user_id, account_id);
+TRANSFER(cents, user_id, account_id)
 // "Transferring 100 from 5000 to 42" -- silent corruption
 ```
 
 ### The Solution
 
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct UserId(u64);
+```text
+// Define distinct types wrapping Integer
+TYPE UserId = WRAPPER(Integer)
+TYPE AccountId = WRAPPER(Integer)
+TYPE Cents = WRAPPER(Integer)
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct AccountId(u64);
+FUNCTION TRANSFER(from: AccountId, to: AccountId, amount: Cents)
+    PRINT "Transferring " + amount + " from " + from + " to " + to
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Cents(u64);
+user ← UserId(42)
+sender ← AccountId(100)
+receiver ← AccountId(200)
+amount ← Cents(5000)
 
-fn transfer(from: AccountId, to: AccountId, amount: Cents) {
-    println!("Transferring {:?} from {:?} to {:?}", amount, from, to);
-}
-
-let user = UserId(42);
-let sender = AccountId(100);
-let receiver = AccountId(200);
-let amount = Cents(5000);
-
-// transfer(amount, user, sender);  // Compiler error!
-// transfer(sender, receiver, user); // Compiler error!
-transfer(sender, receiver, amount);  // Correct -- compiles
+// TRANSFER(amount, user, sender)    // Type error!
+// TRANSFER(sender, receiver, user)  // Type error!
+TRANSFER(sender, receiver, amount)   // Correct -- types match
 ```
 
 ### Adding Behavior to Newtypes
 
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-struct Temperature(f64);
+```text
+TYPE Temperature = WRAPPER(Float)
 
-impl Temperature {
-    fn from_celsius(c: f64) -> Self {
-        Self(c)
-    }
+FUNCTION FROM_CELSIUS(c: Float) → Temperature
+    RETURN Temperature(c)
 
-    fn from_fahrenheit(f: f64) -> Self {
-        Self((f - 32.0) * 5.0 / 9.0)
-    }
+FUNCTION FROM_FAHRENHEIT(f: Float) → Temperature
+    RETURN Temperature((f - 32.0) * 5.0 / 9.0)
 
-    fn as_celsius(&self) -> f64 {
-        self.0
-    }
+FUNCTION AS_CELSIUS(t: Temperature) → Float
+    RETURN t.value
 
-    fn as_fahrenheit(&self) -> f64 {
-        self.0 * 9.0 / 5.0 + 32.0
-    }
+FUNCTION AS_FAHRENHEIT(t: Temperature) → Float
+    RETURN t.value * 9.0 / 5.0 + 32.0
 
-    fn is_freezing(&self) -> bool {
-        self.0 <= 0.0
-    }
-}
+FUNCTION IS_FREEZING(t: Temperature) → Boolean
+    RETURN t.value ≤ 0.0
 
 // Cannot accidentally add Celsius to Fahrenheit
-let boiling = Temperature::from_celsius(100.0);
-let body_temp = Temperature::from_fahrenheit(98.6);
+boiling ← FROM_CELSIUS(100.0)
+body_temp ← FROM_FAHRENHEIT(98.6)
 
 // Both are Temperature -- comparison is meaningful because both store Celsius internally
-assert!(boiling > body_temp);
+ASSERT boiling > body_temp
 ```
 
 ### Implementing Traits for Foreign Types
 
 The newtype pattern also solves Rust's orphan rule: you cannot implement a foreign trait for a foreign type, but you can wrap the foreign type in a newtype:
 
-```rust
-// Cannot do: impl fmt::Display for Vec<String> -- both are foreign
-// But can do:
+```text
+// Cannot implement Display for List<String> directly -- both are foreign
+// But can wrap it:
 
-struct CommaSeparated(Vec<String>);
+TYPE CommaSeparated = WRAPPER(List<String>)
 
-impl fmt::Display for CommaSeparated {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0.join(", "))
-    }
-}
+FUNCTION TO_STRING(cs: CommaSeparated) → String
+    RETURN JOIN(cs.items, ", ")
 
-let tags = CommaSeparated(vec!["rust".into(), "patterns".into(), "newtype".into()]);
-println!("{tags}"); // "rust, patterns, newtype"
+tags ← CommaSeparated(["rust", "patterns", "newtype"])
+PRINT TO_STRING(tags)  // "rust, patterns, newtype"
 ```
 
 ### Real-World Crates That Use It
@@ -152,115 +135,75 @@ The key ingredients are:
 
 ### Rust Implementation
 
-```rust
-use std::marker::PhantomData;
-
+```text
 // State markers -- zero-sized, exist only in the type system
-struct Draft;
-struct UnderReview;
-struct Approved;
-struct Published;
+STATE TYPE Draft
+STATE TYPE UnderReview
+STATE TYPE Approved
+STATE TYPE Published
 
 // The document carries its state as a type parameter
-struct Document<State> {
-    title: String,
-    content: String,
-    author: String,
-    _state: PhantomData<State>,
-}
+RECORD Document<State>
+    title: String
+    content: String
+    author: String
 
 // Methods available in ALL states
-impl<S> Document<S> {
-    pub fn title(&self) -> &str { &self.title }
-    pub fn content(&self) -> &str { &self.content }
-    pub fn author(&self) -> &str { &self.author }
-}
+FUNCTION TITLE(doc: Document<Any>) → String
+    RETURN doc.title
+
+FUNCTION CONTENT(doc: Document<Any>) → String
+    RETURN doc.content
+
+FUNCTION AUTHOR(doc: Document<Any>) → String
+    RETURN doc.author
 
 // Methods available ONLY in Draft state
-impl Document<Draft> {
-    pub fn new(title: &str, author: &str) -> Self {
-        Self {
-            title: title.to_string(),
-            content: String::new(),
-            author: author.to_string(),
-            _state: PhantomData,
-        }
-    }
+FUNCTION NEW_DOCUMENT(title: String, author: String) → Document<Draft>
+    RETURN Document<Draft> { title ← title, content ← "", author ← author }
 
-    pub fn edit(&mut self, content: &str) {
-        self.content = content.to_string();
-    }
+FUNCTION EDIT(doc: Document<Draft>, content: String) → Document<Draft>
+    doc.content ← content
+    RETURN doc
 
-    pub fn submit_for_review(self) -> Document<UnderReview> {
-        Document {
-            title: self.title,
-            content: self.content,
-            author: self.author,
-            _state: PhantomData,
-        }
-    }
-}
+FUNCTION SUBMIT_FOR_REVIEW(doc: Document<Draft>) → Document<UnderReview>
+    // Consumes the Draft document, returns UnderReview document
+    RETURN Document<UnderReview> { title ← doc.title, content ← doc.content, author ← doc.author }
 
 // Methods available ONLY in UnderReview state
-impl Document<UnderReview> {
-    pub fn approve(self) -> Document<Approved> {
-        Document {
-            title: self.title,
-            content: self.content,
-            author: self.author,
-            _state: PhantomData,
-        }
-    }
+FUNCTION APPROVE(doc: Document<UnderReview>) → Document<Approved>
+    RETURN Document<Approved> { title ← doc.title, content ← doc.content, author ← doc.author }
 
-    pub fn reject(self, feedback: &str) -> Document<Draft> {
-        println!("Rejected with feedback: {feedback}");
-        Document {
-            title: self.title,
-            content: self.content,
-            author: self.author,
-            _state: PhantomData,
-        }
-    }
-}
+FUNCTION REJECT(doc: Document<UnderReview>, feedback: String) → Document<Draft>
+    PRINT "Rejected with feedback: " + feedback
+    RETURN Document<Draft> { title ← doc.title, content ← doc.content, author ← doc.author }
 
 // Methods available ONLY in Approved state
-impl Document<Approved> {
-    pub fn publish(self) -> Document<Published> {
-        println!("Publishing: {}", self.title);
-        Document {
-            title: self.title,
-            content: self.content,
-            author: self.author,
-            _state: PhantomData,
-        }
-    }
-}
+FUNCTION PUBLISH(doc: Document<Approved>) → Document<Published>
+    PRINT "Publishing: " + doc.title
+    RETURN Document<Published> { title ← doc.title, content ← doc.content, author ← doc.author }
 
 // Methods available ONLY in Published state
-impl Document<Published> {
-    pub fn url(&self) -> String {
-        format!("/articles/{}", self.title.to_lowercase().replace(' ', "-"))
-    }
-}
+FUNCTION URL(doc: Document<Published>) → String
+    RETURN "/articles/" + LOWERCASE(REPLACE(doc.title, " ", "-"))
 
 // Usage -- the compiler enforces the workflow
-let doc = Document::<Draft>::new("Rust Typestate", "Alice");
+doc ← NEW_DOCUMENT("Rust Typestate", "Alice")
 
-// doc.publish();          // Compile error! Draft cannot be published
-// doc.approve();          // Compile error! Draft cannot be approved
+// PUBLISH(doc)              // Compile error! Draft cannot be published
+// APPROVE(doc)              // Compile error! Draft cannot be approved
 
-let mut doc = doc;
-doc.edit("Typestate is a pattern where...");
-let doc = doc.submit_for_review();
+doc ← EDIT(doc, "Typestate is a pattern where...")
+doc ← SUBMIT_FOR_REVIEW(doc)
 
-// doc.edit("changes");    // Compile error! Cannot edit while under review
+// EDIT(doc, "changes")      // Compile error! Cannot edit while under review
 
-let doc = doc.approve();
-let doc = doc.publish();
+doc ← APPROVE(doc)
+doc ← PUBLISH(doc)
 
-println!("Published at: {}", doc.url());
+PRINT "Published at: " + URL(doc)
 
-// doc.edit("more changes"); // Compile error! Cannot edit published document
+// EDIT(doc, "more changes") // Compile error! Cannot edit published document
 ```
 
 ### Why This Is Unique to Rust
@@ -318,126 +261,99 @@ Thing oops = b.name("B").build(); // b still has name="A" state from before? or 
 
 In Rust, the consuming builder makes reuse impossible:
 
-```rust
-let builder = ThingBuilder::new();
-let a = builder.name("A").build(); // builder is moved
-// let b = builder.name("B").build(); // Compile error! builder was consumed
+```text
+builder ← THING_BUILDER_NEW()
+a ← BUILD(SET_NAME(builder, "A"))    // builder is consumed
+// b ← BUILD(SET_NAME(builder, "B")) // Compile error! builder was already consumed
 ```
 
 ### Rust Implementation with Typestate
 
-```rust
-use std::marker::PhantomData;
-
+```text
 // Markers for required field status
-struct Missing;
-struct Set;
+STATE TYPE Missing
+STATE TYPE Set
 
-struct ConnectionBuilder<HasHost, HasPort> {
-    host: Option<String>,
-    port: Option<u16>,
-    timeout_ms: u64,
-    tls: bool,
-    max_retries: u32,
-    _has_host: PhantomData<HasHost>,
-    _has_port: PhantomData<HasPort>,
-}
+RECORD ConnectionBuilder<HasHost, HasPort>
+    host: Optional<String>
+    port: Optional<Integer>
+    timeout_ms: Integer
+    tls: Boolean
+    max_retries: Integer
 
-impl ConnectionBuilder<Missing, Missing> {
-    pub fn new() -> Self {
-        Self {
-            host: None,
-            port: None,
-            timeout_ms: 30_000,
-            tls: true,
-            max_retries: 3,
-            _has_host: PhantomData,
-            _has_port: PhantomData,
-        }
+FUNCTION NEW_CONNECTION_BUILDER() → ConnectionBuilder<Missing, Missing>
+    RETURN ConnectionBuilder<Missing, Missing> {
+        host ← NONE,
+        port ← NONE,
+        timeout_ms ← 30000,
+        tls ← TRUE,
+        max_retries ← 3
     }
-}
 
-impl<P> ConnectionBuilder<Missing, P> {
-    /// Set the host (required). Transitions HasHost from Missing to Set.
-    pub fn host(self, host: &str) -> ConnectionBuilder<Set, P> {
-        ConnectionBuilder {
-            host: Some(host.to_string()),
-            port: self.port,
-            timeout_ms: self.timeout_ms,
-            tls: self.tls,
-            max_retries: self.max_retries,
-            _has_host: PhantomData,
-            _has_port: PhantomData,
-        }
+// Set the host (required). Transitions HasHost from Missing to Set.
+FUNCTION SET_HOST(builder: ConnectionBuilder<Missing, P>, host: String) → ConnectionBuilder<Set, P>
+    RETURN ConnectionBuilder<Set, P> {
+        host ← host,
+        port ← builder.port,
+        timeout_ms ← builder.timeout_ms,
+        tls ← builder.tls,
+        max_retries ← builder.max_retries
     }
-}
 
-impl<H> ConnectionBuilder<H, Missing> {
-    /// Set the port (required). Transitions HasPort from Missing to Set.
-    pub fn port(self, port: u16) -> ConnectionBuilder<H, Set> {
-        ConnectionBuilder {
-            host: self.host,
-            port: Some(port),
-            timeout_ms: self.timeout_ms,
-            tls: self.tls,
-            max_retries: self.max_retries,
-            _has_host: PhantomData,
-            _has_port: PhantomData,
-        }
+// Set the port (required). Transitions HasPort from Missing to Set.
+FUNCTION SET_PORT(builder: ConnectionBuilder<H, Missing>, port: Integer) → ConnectionBuilder<H, Set>
+    RETURN ConnectionBuilder<H, Set> {
+        host ← builder.host,
+        port ← port,
+        timeout_ms ← builder.timeout_ms,
+        tls ← builder.tls,
+        max_retries ← builder.max_retries
     }
-}
 
 // Optional fields -- available regardless of state
-impl<H, P> ConnectionBuilder<H, P> {
-    pub fn timeout(mut self, ms: u64) -> Self {
-        self.timeout_ms = ms;
-        self
+FUNCTION SET_TIMEOUT(builder: ConnectionBuilder<H, P>, ms: Integer) → ConnectionBuilder<H, P>
+    builder.timeout_ms ← ms
+    RETURN builder
+
+FUNCTION SET_TLS(builder: ConnectionBuilder<H, P>, enabled: Boolean) → ConnectionBuilder<H, P>
+    builder.tls ← enabled
+    RETURN builder
+
+FUNCTION SET_MAX_RETRIES(builder: ConnectionBuilder<H, P>, n: Integer) → ConnectionBuilder<H, P>
+    builder.max_retries ← n
+    RETURN builder
+
+// BUILD only available when BOTH required fields are set
+FUNCTION BUILD(builder: ConnectionBuilder<Set, Set>) → Connection
+    RETURN Connection {
+        host ← builder.host,
+        port ← builder.port,
+        timeout_ms ← builder.timeout_ms,
+        tls ← builder.tls,
+        max_retries ← builder.max_retries
     }
 
-    pub fn tls(mut self, enabled: bool) -> Self {
-        self.tls = enabled;
-        self
-    }
-
-    pub fn max_retries(mut self, n: u32) -> Self {
-        self.max_retries = n;
-        self
-    }
-}
-
-// build() only available when BOTH required fields are set
-impl ConnectionBuilder<Set, Set> {
-    pub fn build(self) -> Connection {
-        Connection {
-            host: self.host.unwrap(),
-            port: self.port.unwrap(),
-            timeout_ms: self.timeout_ms,
-            tls: self.tls,
-            max_retries: self.max_retries,
-        }
-    }
-}
-
-struct Connection {
-    host: String,
-    port: u16,
-    timeout_ms: u64,
-    tls: bool,
-    max_retries: u32,
-}
+RECORD Connection
+    host: String
+    port: Integer
+    timeout_ms: Integer
+    tls: Boolean
+    max_retries: Integer
 
 // Usage
-let conn = ConnectionBuilder::new()
-    .host("db.example.com")
-    .port(5432)
-    .timeout(10_000)
-    .tls(true)
-    .build(); // Compiles -- both host and port are set
+conn ← BUILD(
+    SET_TLS(
+        SET_TIMEOUT(
+            SET_PORT(
+                SET_HOST(NEW_CONNECTION_BUILDER(), "db.example.com"),
+                5432),
+            10000),
+        TRUE))
+// Compiles -- both host and port are set
 
 // This does NOT compile -- port is missing:
-// let conn = ConnectionBuilder::new()
-//     .host("db.example.com")
-//     .build(); // Error: build() not available on ConnectionBuilder<Set, Missing>
+// conn ← BUILD(SET_HOST(NEW_CONNECTION_BUILDER(), "db.example.com"))
+// Error: BUILD not available on ConnectionBuilder<Set, Missing>
 ```
 
 ### Real-World Crates That Use It

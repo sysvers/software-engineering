@@ -84,77 +84,46 @@ This is naturally idempotent because the operation succeeds exactly once; retrie
 
 ## Rust Implementation
 
-```rust
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
+```text
 /// Stores results of previously processed requests for deduplication.
-struct IdempotencyStore<R: Clone> {
-    entries: HashMap<String, (R, Instant)>,
-    retention: Duration,
-}
+STRUCTURE IdempotencyStore<R>
+    entries : Map<String, (R, Timestamp)>
+    retention : Duration
 
-impl<R: Clone> IdempotencyStore<R> {
-    fn new(retention: Duration) -> Self {
-        Self {
-            entries: HashMap::new(),
-            retention,
-        }
-    }
+/// Check whether a request with this idempotency key was already processed.
+PROCEDURE IdempotencyStore.GET_EXISTING_RESULT(key) → Optional<R>
+    (result, created_at) ← self.entries[key]
+    IF result IS NOT NULL AND ELAPSED(created_at) < self.retention THEN
+        RETURN result
+    END IF
+    RETURN NULL
 
-    /// Check whether a request with this idempotency key was already processed.
-    fn get_existing_result(&self, key: &str) -> Option<R> {
-        self.entries.get(key).and_then(|(result, created_at)| {
-            if created_at.elapsed() < self.retention {
-                Some(result.clone())
-            } else {
-                None
-            }
-        })
-    }
+/// Record the result of a processed request.
+PROCEDURE IdempotencyStore.RECORD(key, result)
+    self.entries[key] ← (result, CURRENT_TIME())
 
-    /// Record the result of a processed request.
-    fn record(&mut self, key: String, result: R) {
-        self.entries.insert(key, (result, Instant::now()));
-    }
-
-    /// Purge entries older than the retention period.
-    fn purge_expired(&mut self) {
-        self.entries
-            .retain(|_, (_, created_at)| created_at.elapsed() < self.retention);
-    }
-}
+/// Purge entries older than the retention period.
+PROCEDURE IdempotencyStore.PURGE_EXPIRED()
+    RETAIN entries WHERE ELAPSED(created_at) < self.retention
 
 /// Middleware-style handler demonstrating idempotent request processing.
-struct IdempotentHandler<R: Clone> {
-    store: IdempotencyStore<R>,
-}
+STRUCTURE IdempotentHandler<R>
+    store : IdempotencyStore<R>
 
-impl<R: Clone> IdempotentHandler<R> {
-    fn new(retention: Duration) -> Self {
-        Self {
-            store: IdempotencyStore::new(retention),
-        }
-    }
+/// Process a request idempotently. If the key was seen before,
+/// return the stored result. Otherwise, execute the operation and store it.
+PROCEDURE IdempotentHandler.HANDLE(idempotency_key, operation) → R
+    // Check for existing result first.
+    existing ← self.store.GET_EXISTING_RESULT(idempotency_key)
+    IF existing IS NOT NULL THEN
+        PRINT "Returning cached result for key: " + idempotency_key
+        RETURN existing
+    END IF
 
-    /// Process a request idempotently. If the key was seen before,
-    /// return the stored result. Otherwise, execute the operation and store it.
-    fn handle<F>(&mut self, idempotency_key: &str, operation: F) -> R
-    where
-        F: FnOnce() -> R,
-    {
-        // Check for existing result first.
-        if let Some(existing) = self.store.get_existing_result(idempotency_key) {
-            println!("Returning cached result for key: {}", idempotency_key);
-            return existing;
-        }
-
-        // Execute the operation and store the result.
-        let result = operation();
-        self.store.record(idempotency_key.to_string(), result.clone());
-        result
-    }
-}
+    // Execute the operation and store the result.
+    result ← CALL operation()
+    self.store.RECORD(idempotency_key, result)
+    RETURN result
 ```
 
 ---

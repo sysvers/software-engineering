@@ -183,60 +183,44 @@ The N+1 problem occurs when you fetch a list of N items, then execute a separate
 
 ### The problem
 
-```rust
+```text
 // BAD: N+1 queries
-let users = sqlx::query_as::<_, User>("SELECT * FROM users LIMIT 50")
-    .fetch_all(&pool).await?;
+users ← AWAIT QUERY pool: "SELECT * FROM users LIMIT 50"
 
-for user in &users {
+FOR EACH user IN users:
     // This executes 50 separate queries!
-    let orders = sqlx::query_as::<_, Order>(
-        "SELECT * FROM orders WHERE user_id = $1"
-    )
-    .bind(user.id)
-    .fetch_all(&pool).await?;
+    orders ← AWAIT QUERY pool: "SELECT * FROM orders WHERE user_id = user.id"
 
     // process user + orders...
-}
 // Total: 1 + 50 = 51 queries
 ```
 
 ### The fix: batch loading
 
-```rust
+```text
 // GOOD: 2 queries total
-let users = sqlx::query_as::<_, User>("SELECT * FROM users LIMIT 50")
-    .fetch_all(&pool).await?;
+users ← AWAIT QUERY pool: "SELECT * FROM users LIMIT 50"
 
-let user_ids: Vec<i64> = users.iter().map(|u| u.id).collect();
+user_ids ← COLLECT user.id FOR EACH user IN users
 
-let orders = sqlx::query_as::<_, Order>(
-    "SELECT * FROM orders WHERE user_id = ANY($1)"
-)
-.bind(&user_ids)
-.fetch_all(&pool).await?;
+orders ← AWAIT QUERY pool: "SELECT * FROM orders WHERE user_id IN (user_ids)"
 
 // Group orders by user_id in application code
-let orders_by_user: HashMap<i64, Vec<&Order>> = orders
-    .iter()
-    .fold(HashMap::new(), |mut acc, order| {
-        acc.entry(order.user_id).or_default().push(order);
-        acc
-    });
+orders_by_user ← empty map
+FOR EACH order IN orders:
+    APPEND order TO orders_by_user[order.user_id]
 // Total: 2 queries regardless of N
 ```
 
 ### The fix: JOIN
 
-```rust
+```text
 // GOOD: single query with JOIN
-let results = sqlx::query_as::<_, UserWithOrder>(
+results ← AWAIT QUERY pool:
     "SELECT u.id, u.name, o.id AS order_id, o.total, o.status
      FROM users u
      LEFT JOIN orders o ON u.id = o.user_id
      ORDER BY u.id, o.created_at DESC"
-)
-.fetch_all(&pool).await?;
 // Total: 1 query
 ```
 
@@ -248,18 +232,14 @@ Opening a database connection is expensive: TCP handshake, TLS negotiation, auth
 
 ### Configuring a pool in Rust
 
-```rust
-use sqlx::postgres::PgPoolOptions;
-use std::time::Duration;
-
-let pool = PgPoolOptions::new()
-    .max_connections(20)
-    .min_connections(5)
-    .acquire_timeout(Duration::from_secs(3))
-    .idle_timeout(Duration::from_secs(300))
-    .max_lifetime(Duration::from_secs(1800))
-    .connect("postgres://user:pass@localhost/mydb")
-    .await?;
+```text
+pool ← NEW PgPoolOptions
+    SET max_connections ← 20
+    SET min_connections ← 5
+    SET acquire_timeout ← 3 seconds
+    SET idle_timeout ← 300 seconds
+    SET max_lifetime ← 1800 seconds
+    AWAIT CONNECT("postgres://user:pass@localhost/mydb")
 ```
 
 ### Sizing the pool

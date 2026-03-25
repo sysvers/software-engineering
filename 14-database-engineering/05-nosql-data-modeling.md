@@ -59,58 +59,37 @@ Redis is an in-memory data structure server. It is not a primary database — it
 
 **Cache-aside (lazy loading):** The application checks the cache first. On a miss, it queries the database, then populates the cache.
 
-```rust
-use redis::AsyncCommands;
-
-async fn get_product(
-    redis: &mut redis::aio::MultiplexedConnection,
-    db: &sqlx::PgPool,
-    product_id: i64,
-) -> anyhow::Result<Product> {
-    let cache_key = format!("product:{}", product_id);
+```text
+PROCEDURE GET_PRODUCT(redis, db, product_id):
+    cache_key ← "product:" + product_id
 
     // Try cache
-    if let Some(json) = redis.get::<_, Option<String>>(&cache_key).await? {
-        return Ok(serde_json::from_str(&json)?);
-    }
+    json ← AWAIT redis.GET(cache_key)
+    IF json IS present THEN
+        RETURN PARSE_JSON(json) AS Product
 
-    // Cache miss — fetch from PostgreSQL
-    let product = sqlx::query_as::<_, Product>(
-        "SELECT id, name, price_cents, stock FROM products WHERE id = $1"
-    )
-    .bind(product_id)
-    .fetch_one(db)
-    .await?;
+    // Cache miss -- fetch from PostgreSQL
+    product ← AWAIT QUERY db:
+        "SELECT id, name, price_cents, stock FROM products WHERE id = product_id"
 
     // Populate cache with 10-minute TTL
-    let json = serde_json::to_string(&product)?;
-    redis.set_ex(&cache_key, &json, 600).await?;
+    json ← TO_JSON_STRING(product)
+    AWAIT redis.SET_WITH_EXPIRY(cache_key, json, 600)
 
-    Ok(product)
-}
+    RETURN product
 ```
 
 **Write-through:** Every write goes to both the database and the cache. Ensures cache freshness at the cost of write latency.
 
 **Cache invalidation:** When data changes, delete the cache key rather than trying to update it. The next read repopulates with fresh data. This avoids race conditions between concurrent writers.
 
-```rust
-async fn update_product_price(
-    redis: &mut redis::aio::MultiplexedConnection,
-    db: &sqlx::PgPool,
-    product_id: i64,
-    new_price: i64,
-) -> anyhow::Result<()> {
-    sqlx::query("UPDATE products SET price_cents = $1 WHERE id = $2")
-        .bind(new_price)
-        .bind(product_id)
-        .execute(db)
-        .await?;
+```text
+PROCEDURE UPDATE_PRODUCT_PRICE(redis, db, product_id, new_price):
+    AWAIT EXECUTE db:
+        "UPDATE products SET price_cents = new_price WHERE id = product_id"
 
-    // Invalidate — do not update
-    redis.del(format!("product:{}", product_id)).await?;
-    Ok(())
-}
+    // Invalidate -- do not update
+    AWAIT redis.DELETE("product:" + product_id)
 ```
 
 ### Sorted sets for leaderboards and ranking
@@ -133,18 +112,17 @@ Real-world example: a gaming platform with 10 million players. PostgreSQL cannot
 
 Redis pub/sub delivers messages to all subscribers on a channel. Messages are fire-and-forget — no persistence, no acknowledgment.
 
-```rust
+```text
 // Publisher
-redis.publish("notifications:user:123", "You have a new order").await?;
+AWAIT redis.PUBLISH("notifications:user:123", "You have a new order")
 
 // Subscriber (runs in a separate task)
-let mut pubsub = redis_conn.into_pubsub();
-pubsub.subscribe("notifications:user:123").await?;
+pubsub ← redis_conn.INTO_PUBSUB()
+AWAIT pubsub.SUBSCRIBE("notifications:user:123")
 
-while let Some(msg) = pubsub.on_message().next().await {
-    let payload: String = msg.get_payload()?;
-    println!("Received: {}", payload);
-}
+WHILE message ← NEXT MESSAGE FROM pubsub:
+    payload ← message.GET_PAYLOAD()
+    PRINT "Received:", payload
 ```
 
 **When to use pub/sub vs. Redis Streams:** Pub/sub is ephemeral — if no subscriber is listening, the message is lost. Redis Streams (`XADD`, `XREAD`, `XREADGROUP`) provide persistent, consumer-group-based messaging similar to Kafka. Use Streams when you need durability and at-least-once delivery.

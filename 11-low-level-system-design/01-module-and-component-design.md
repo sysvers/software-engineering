@@ -68,21 +68,19 @@ src/
 
 The entry point (`main.rs`) is where dependency injection happens. It constructs concrete implementations and passes them to the layers that need abstractions:
 
-```rust
-#[tokio::main]
-async fn main() {
-    let pool = PgPool::connect(&database_url).await.unwrap();
-    let order_repo = PostgresOrderRepo::new(pool.clone());
-    let payment_client = StripeClient::new(&stripe_api_key);
-    let order_service = OrderService::new(order_repo, payment_client);
+```text
+ASYNC FUNCTION MAIN()
+    pool ← AWAIT PG_POOL_CONNECT(database_url)
+    order_repo ← NEW PostgresOrderRepo(pool)
+    payment_client ← NEW StripeClient(stripe_api_key)
+    order_service ← NEW OrderService(order_repo, payment_client)
 
-    let app = Router::new()
-        .route("/orders", post(create_order))
-        .route("/orders/:id", get(get_order))
-        .with_state(AppState { order_service });
+    app ← NEW Router()
+        .ROUTE("/orders", POST → CREATE_ORDER)
+        .ROUTE("/orders/:id", GET → GET_ORDER)
+        .WITH_STATE(AppState { order_service ← order_service })
 
-    axum::Server::bind(&addr).serve(app.into_make_service()).await.unwrap();
-}
+    AWAIT SERVER_BIND(addr).SERVE(app)
 ```
 
 No layer instantiates its own dependencies. The entry point is the only place that knows about all concrete types.
@@ -97,15 +95,14 @@ Input → [Validate] → [Enrich] → [Transform] → [Store] → Output
 
 Each step is a pure function that takes input and produces output. Easy to test (each step independently) and extend (add a new step).
 
-```rust
-fn process_order(raw: RawOrderInput) -> Result<OrderConfirmation, OrderError> {
-    let validated = validate_order(raw)?;
-    let enriched = enrich_with_pricing(validated)?;
-    let with_tax = calculate_tax(enriched)?;
-    let stored = save_to_database(with_tax)?;
-    let confirmation = send_confirmation(stored)?;
-    Ok(confirmation)
-}
+```text
+FUNCTION PROCESS_ORDER(raw: RawOrderInput) → Result<OrderConfirmation, OrderError>
+    validated ← VALIDATE_ORDER(raw)?
+    enriched ← ENRICH_WITH_PRICING(validated)?
+    with_tax ← CALCULATE_TAX(enriched)?
+    stored ← SAVE_TO_DATABASE(with_tax)?
+    confirmation ← SEND_CONFIRMATION(stored)?
+    RETURN confirmation
 ```
 
 ### Middleware / Interceptor Pattern

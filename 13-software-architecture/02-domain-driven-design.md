@@ -46,60 +46,53 @@ A bounded context is the most important strategic pattern in DDD. It defines an 
 
 Without bounded contexts, teams inevitably create one massive `Customer` struct/class that tries to serve every part of the system:
 
-```rust
+```text
 // The God Object -- DO NOT DO THIS
-struct Customer {
-    id: CustomerId,
-    name: String,
-    email: String,
-    preferences: Vec<Preference>,       // Sales needs this
-    purchase_history: Vec<Purchase>,     // Sales needs this
-    shipping_address: Address,           // Shipping needs this
-    delivery_zone: DeliveryZone,         // Shipping needs this
-    contact_phone: String,              // Shipping needs this
-    payment_method: PaymentMethod,       // Billing needs this
-    credit_limit: Money,                // Billing needs this
-    billing_address: Address,           // Billing needs this
-    tax_id: Option<String>,             // Billing needs this
-    loyalty_points: u32,                // Marketing needs this
-    segment: CustomerSegment,           // Marketing needs this
-}
+STRUCTURE Customer:
+    id ← CustomerId
+    name ← string
+    email ← string
+    preferences ← list of Preference       // Sales needs this
+    purchase_history ← list of Purchase     // Sales needs this
+    shipping_address ← Address              // Shipping needs this
+    delivery_zone ← DeliveryZone            // Shipping needs this
+    contact_phone ← string                  // Shipping needs this
+    payment_method ← PaymentMethod          // Billing needs this
+    credit_limit ← Money                    // Billing needs this
+    billing_address ← Address               // Billing needs this
+    tax_id ← optional string                // Billing needs this
+    loyalty_points ← integer                // Marketing needs this
+    segment ← CustomerSegment               // Marketing needs this
 ```
 
 This object grows to dozens of fields. Every change risks breaking unrelated features. Loading a Customer for shipping pulls in billing data it does not need. The struct becomes a coordination bottleneck across teams.
 
 ### Correct Approach: Separate Models Per Context
 
-```rust
+```text
 // Sales context
-mod sales {
-    pub struct Customer {
-        pub id: CustomerId,
-        pub name: String,
-        pub preferences: Vec<Preference>,
-        pub purchase_history: Vec<PurchaseId>,
-    }
-}
+MODULE sales:
+    STRUCTURE Customer:
+        id ← CustomerId
+        name ← string
+        preferences ← list of Preference
+        purchase_history ← list of PurchaseId
 
 // Shipping context
-mod shipping {
-    pub struct Recipient {
-        pub customer_id: CustomerId,  // Reference to sales context
-        pub address: Address,
-        pub delivery_zone: DeliveryZone,
-        pub contact_phone: String,
-    }
-}
+MODULE shipping:
+    STRUCTURE Recipient:
+        customer_id ← CustomerId  // Reference to sales context
+        address ← Address
+        delivery_zone ← DeliveryZone
+        contact_phone ← string
 
 // Billing context
-mod billing {
-    pub struct BillingAccount {
-        pub customer_id: CustomerId,  // Reference to sales context
-        pub payment_method: PaymentMethod,
-        pub credit_limit: Money,
-        pub billing_address: Address,
-    }
-}
+MODULE billing:
+    STRUCTURE BillingAccount:
+        customer_id ← CustomerId  // Reference to sales context
+        payment_method ← PaymentMethod
+        credit_limit ← Money
+        billing_address ← Address
 ```
 
 Each context has its own model with only the data it needs. They share a `CustomerId` to correlate across contexts, but each model is independently owned and evolved.
@@ -115,40 +108,32 @@ Bounded contexts do not exist in isolation. They interact. DDD defines several r
 
 ### Real-World Example: Anti-Corruption Layer
 
-```rust
+```text
 // External payment provider returns this
-#[derive(Deserialize)]
-struct StripeCharge {
-    id: String,
-    amount: i64,          // Stripe uses cents
-    currency: String,     // Stripe uses ISO strings
-    status: String,       // "succeeded", "failed", etc.
-}
+STRUCTURE StripeCharge:
+    id ← string
+    amount ← integer          // Stripe uses cents
+    currency ← string         // Stripe uses ISO strings
+    status ← string           // "succeeded", "failed", etc.
 
 // Our domain model
-pub struct Payment {
-    pub id: PaymentId,
-    pub amount: Money,
-    pub status: PaymentStatus,
-}
+STRUCTURE Payment:
+    id ← PaymentId
+    amount ← Money
+    status ← PaymentStatus
 
 // Anti-corruption layer: translates Stripe's model into ours
-impl TryFrom<StripeCharge> for Payment {
-    type Error = DomainError;
+PROCEDURE CONVERT_STRIPE_CHARGE_TO_PAYMENT(charge):
+    id ← PaymentId.FROM_EXTERNAL(charge.id)
+    amount ← Money.FROM_CENTS(charge.amount, PARSE_CURRENCY(charge.currency))
 
-    fn try_from(charge: StripeCharge) -> Result<Self, Self::Error> {
-        Ok(Payment {
-            id: PaymentId::from_external(charge.id),
-            amount: Money::from_cents(charge.amount, Currency::parse(&charge.currency)?),
-            status: match charge.status.as_str() {
-                "succeeded" => PaymentStatus::Completed,
-                "failed" => PaymentStatus::Failed,
-                "pending" => PaymentStatus::Processing,
-                other => return Err(DomainError::UnknownPaymentStatus(other.to_string())),
-            },
-        })
-    }
-}
+    MATCH charge.status:
+        "succeeded" → status ← Completed
+        "failed"    → status ← Failed
+        "pending"   → status ← Processing
+        other       → RETURN Error(UnknownPaymentStatus, other)
+
+    RETURN Payment { id, amount, status }
 ```
 
 The ACL ensures that if Stripe changes their API (renames fields, changes status strings), only the translation layer changes. The domain model remains stable.
@@ -172,89 +157,61 @@ The aggregate root enforces **invariants**: business rules that must always be t
 
 ### Rust Example
 
-```rust
-pub struct Order {
-    id: OrderId,
-    customer_id: CustomerId,
-    items: Vec<OrderItem>,
-    status: OrderStatus,
-    total: Money,
-    created_at: DateTime<Utc>,
-}
+```text
+STRUCTURE Order:
+    id ← OrderId
+    customer_id ← CustomerId
+    items ← list of OrderItem
+    status ← OrderStatus
+    total ← Money
+    created_at ← DateTime
 
 // OrderItem is internal to the aggregate -- no external access
-struct OrderItem {
-    product_id: ProductId,
-    quantity: u32,
-    unit_price: Money,
-    line_total: Money,
-}
+STRUCTURE OrderItem:
+    product_id ← ProductId
+    quantity ← integer
+    unit_price ← Money
+    line_total ← Money
 
-impl Order {
-    pub fn new(customer_id: CustomerId) -> Self {
-        Self {
-            id: OrderId::generate(),
-            customer_id,
-            items: Vec::new(),
-            status: OrderStatus::Draft,
-            total: Money::zero(Currency::USD),
-            created_at: Utc::now(),
-        }
+PROCEDURE NEW_ORDER(customer_id):
+    RETURN Order {
+        id ← GENERATE_ORDER_ID(),
+        customer_id ← customer_id,
+        items ← empty list,
+        status ← Draft,
+        total ← Money.ZERO(USD),
+        created_at ← NOW()
     }
 
-    // All mutations go through the aggregate root
-    pub fn add_item(
-        &mut self,
-        product_id: ProductId,
-        quantity: u32,
-        unit_price: Money,
-    ) -> Result<(), OrderError> {
-        // Invariant: cannot modify submitted orders
-        if self.status != OrderStatus::Draft {
-            return Err(OrderError::CannotModifySubmittedOrder);
-        }
-        // Invariant: quantity must be positive
-        if quantity == 0 {
-            return Err(OrderError::InvalidQuantity);
-        }
+// All mutations go through the aggregate root
+PROCEDURE ADD_ITEM(order, product_id, quantity, unit_price):
+    // Invariant: cannot modify submitted orders
+    IF order.status ≠ Draft THEN
+        RETURN Error(CannotModifySubmittedOrder)
+    // Invariant: quantity must be positive
+    IF quantity = 0 THEN
+        RETURN Error(InvalidQuantity)
 
-        let line_total = unit_price.multiply(quantity);
-        self.items.push(OrderItem {
-            product_id,
-            quantity,
-            unit_price,
-            line_total,
-        });
-        self.recalculate_total();
-        Ok(())
-    }
+    line_total ← unit_price * quantity
+    APPEND TO order.items: OrderItem { product_id, quantity, unit_price, line_total }
+    RECALCULATE_TOTAL(order)
+    RETURN Ok
 
-    pub fn submit(&mut self) -> Result<Vec<OrderEvent>, OrderError> {
-        // Invariant: cannot submit empty order
-        if self.items.is_empty() {
-            return Err(OrderError::EmptyOrder);
-        }
-        // Invariant: cannot submit twice
-        if self.status != OrderStatus::Draft {
-            return Err(OrderError::AlreadySubmitted);
-        }
+PROCEDURE SUBMIT(order):
+    // Invariant: cannot submit empty order
+    IF order.items IS empty THEN
+        RETURN Error(EmptyOrder)
+    // Invariant: cannot submit twice
+    IF order.status ≠ Draft THEN
+        RETURN Error(AlreadySubmitted)
 
-        self.status = OrderStatus::Submitted;
+    order.status ← Submitted
 
-        // Return domain events for other contexts to react to
-        Ok(vec![OrderEvent::OrderPlaced {
-            order_id: self.id.clone(),
-            customer_id: self.customer_id.clone(),
-            total: self.total.clone(),
-        }])
-    }
+    // Return domain events for other contexts to react to
+    RETURN [OrderPlaced { order_id, customer_id, total }]
 
-    fn recalculate_total(&mut self) {
-        self.total = self.items.iter()
-            .map(|item| &item.line_total)
-            .fold(Money::zero(Currency::USD), |acc, m| acc.add(m));
-    }
-}
+PROCEDURE RECALCULATE_TOTAL(order):
+    order.total ← SUM OF item.line_total FOR EACH item IN order.items
 ```
 
 ### Common Mistake: Over-Sized Aggregates
@@ -263,16 +220,14 @@ A frequent error is making aggregates too large. For example, putting all `Order
 
 Instead, keep aggregates small and reference other aggregates by ID:
 
-```rust
+```text
 // WRONG: Product is part of Order aggregate
-struct Order {
-    items: Vec<Product>,  // Product is a full entity with its own lifecycle
-}
+STRUCTURE Order:
+    items ← list of Product  // Product is a full entity with its own lifecycle
 
 // RIGHT: Order references products by ID
-struct Order {
-    items: Vec<OrderItem>,  // OrderItem holds ProductId, not Product
-}
+STRUCTURE Order:
+    items ← list of OrderItem  // OrderItem holds ProductId, not Product
 ```
 
 ---
@@ -283,47 +238,38 @@ struct Order {
 
 Entities have **identity**. Two entities with identical field values but different IDs are different objects. An entity's identity persists across time and state changes.
 
-```rust
-struct User {
-    id: UserId,          // Identity -- this is what makes it unique
-    name: String,
-    email: String,
-}
+```text
+STRUCTURE User:
+    id ← UserId          // Identity -- this is what makes it unique
+    name ← string
+    email ← string
 
 // These are DIFFERENT users, even with the same name and email
-let alice1 = User { id: UserId(1), name: "Alice".into(), email: "alice@test.com".into() };
-let alice2 = User { id: UserId(2), name: "Alice".into(), email: "alice@test.com".into() };
-assert_ne!(alice1.id, alice2.id);  // Different entities
+alice1 ← User { id ← UserId(1), name ← "Alice", email ← "alice@test.com" }
+alice2 ← User { id ← UserId(2), name ← "Alice", email ← "alice@test.com" }
+ASSERT alice1.id ≠ alice2.id  // Different entities
 ```
 
 ### Value Objects
 
 Value objects have no identity. They are defined entirely by their attributes. Two value objects with the same attributes are interchangeable.
 
-```rust
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Money {
-    amount_cents: i64,
-    currency: Currency,
-}
+```text
+STRUCTURE Money (value object, immutable, comparable by value):
+    amount_cents ← integer
+    currency ← Currency
 
-impl Money {
-    pub fn new(amount_cents: i64, currency: Currency) -> Result<Self, DomainError> {
-        // Value objects validate on creation
-        if amount_cents < 0 {
-            return Err(DomainError::NegativeAmount);
-        }
-        Ok(Self { amount_cents, currency })
-    }
+PROCEDURE NEW_MONEY(amount_cents, currency):
+    // Value objects validate on creation
+    IF amount_cents < 0 THEN
+        RETURN Error(NegativeAmount)
+    RETURN Money { amount_cents, currency }
 
-    // Value objects are immutable -- operations return new instances
-    pub fn add(&self, other: &Money) -> Result<Money, DomainError> {
-        if self.currency != other.currency {
-            return Err(DomainError::CurrencyMismatch);
-        }
-        Money::new(self.amount_cents + other.amount_cents, self.currency)
-    }
-}
+// Value objects are immutable -- operations return new instances
+PROCEDURE ADD(self, other):
+    IF self.currency ≠ other.currency THEN
+        RETURN Error(CurrencyMismatch)
+    RETURN NEW_MONEY(self.amount_cents + other.amount_cents, self.currency)
 ```
 
 ### Design Heuristics
@@ -342,26 +288,21 @@ impl Money {
 
 Domain events represent something significant that happened in the domain. They are named in past tense and describe facts that cannot be changed.
 
-```rust
-#[derive(Debug, Clone)]
-pub enum OrderEvent {
-    OrderPlaced {
-        order_id: OrderId,
-        customer_id: CustomerId,
-        total: Money,
-        placed_at: DateTime<Utc>,
-    },
-    OrderShipped {
-        order_id: OrderId,
-        tracking_number: String,
-        shipped_at: DateTime<Utc>,
-    },
-    OrderCancelled {
-        order_id: OrderId,
-        reason: CancellationReason,
-        cancelled_at: DateTime<Utc>,
-    },
-}
+```text
+ENUMERATION OrderEvent:
+    OrderPlaced:
+        order_id ← OrderId
+        customer_id ← CustomerId
+        total ← Money
+        placed_at ← DateTime
+    OrderShipped:
+        order_id ← OrderId
+        tracking_number ← string
+        shipped_at ← DateTime
+    OrderCancelled:
+        order_id ← OrderId
+        reason ← CancellationReason
+        cancelled_at ← DateTime
 ```
 
 ### Why Domain Events Matter
@@ -376,37 +317,31 @@ The Order context knows none of this. It publishes an event and moves on. New re
 
 ### Implementation Pattern in Rust
 
-```rust
+```text
 // Aggregate collects events during operations
-impl Order {
-    pub fn submit(&mut self) -> Result<Vec<OrderEvent>, OrderError> {
-        // ... validation ...
-        self.status = OrderStatus::Submitted;
-        Ok(vec![OrderEvent::OrderPlaced {
-            order_id: self.id.clone(),
-            customer_id: self.customer_id.clone(),
-            total: self.total.clone(),
-            placed_at: Utc::now(),
-        }])
-    }
-}
+PROCEDURE SUBMIT(order):
+    // ... validation ...
+    order.status ← Submitted
+    RETURN [OrderPlaced {
+        order_id ← order.id,
+        customer_id ← order.customer_id,
+        total ← order.total,
+        placed_at ← NOW()
+    }]
 
 // Application service publishes events after persisting
-impl<R: OrderRepository, E: EventPublisher> OrderService<R, E> {
-    pub async fn submit_order(&self, order_id: OrderId) -> Result<(), AppError> {
-        let mut order = self.repo.find_by_id(&order_id).await?
-            .ok_or(AppError::NotFound)?;
+PROCEDURE SUBMIT_ORDER(service, order_id):
+    order ← AWAIT service.repo.FIND_BY_ID(order_id)
+    IF order IS NOT found THEN RETURN Error(NotFound)
 
-        let events = order.submit()?;
-        self.repo.save(&order).await?;
+    events ← SUBMIT(order)
+    IF events IS error THEN RETURN error
+    AWAIT service.repo.SAVE(order)
 
-        // Publish after successful persistence
-        for event in events {
-            self.event_publisher.publish(event).await?;
-        }
-        Ok(())
-    }
-}
+    // Publish after successful persistence
+    FOR EACH event IN events:
+        AWAIT service.event_publisher.PUBLISH(event)
+    RETURN Ok
 ```
 
 ### Pitfalls with Domain Events

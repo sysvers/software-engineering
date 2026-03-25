@@ -197,24 +197,16 @@ enum OrderStatus {
 
 **Using `tonic` in Rust:**
 
-```rust
+```text
 // Generated from .proto file
-use order::order_service_server::{OrderService, OrderServiceServer};
 
-#[derive(Default)]
-pub struct MyOrderService;
+STRUCTURE MyOrderService (default)
 
-#[tonic::async_trait]
-impl OrderService for MyOrderService {
-    async fn create_order(
-        &self,
-        request: Request<CreateOrderRequest>,
-    ) -> Result<Response<Order>, Status> {
-        let req = request.into_inner();
+IMPLEMENT OrderService FOR MyOrderService:
+    PROCEDURE CREATE_ORDER(request):
+        req ← EXTRACT inner data FROM request
         // Process order...
-        Ok(Response::new(order))
-    }
-}
+        RETURN Response(order)
 ```
 
 **When to use gRPC:**

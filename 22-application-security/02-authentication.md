@@ -6,45 +6,30 @@ Authentication answers the question: "Who are you?" It is the process of verifyi
 
 The server creates a session after login, stores it server-side (database, Redis), and sends a session ID in a cookie. Every subsequent request includes the cookie. The server looks up the session to identify the user.
 
-```rust
-use axum::{extract::Form, http::StatusCode, Extension};
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use uuid::Uuid;
-
-async fn login(
-    Form(credentials): Form<LoginRequest>,
-    jar: CookieJar,
-    Extension(pool): Extension<PgPool>,
-    Extension(session_store): Extension<RedisPool>,
-) -> Result<(CookieJar, StatusCode), StatusCode> {
-    let user = db::find_user_by_email(&pool, &credentials.email)
-        .await
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+```text
+PROCEDURE LOGIN(credentials, cookie_jar, pool, session_store) → Result<(CookieJar, StatusCode)>
+    user ← DB_FIND_USER_BY_EMAIL(pool, credentials.email)
+    IF user NOT FOUND THEN RETURN Error(401 UNAUTHORIZED)
 
     // Verify password using argon2
-    let parsed_hash = argon2::PasswordHash::new(&user.password_hash)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    argon2::Argon2::default()
-        .verify_password(credentials.password.as_bytes(), &parsed_hash)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    parsed_hash ← PARSE_PASSWORD_HASH(user.password_hash)
+    IF VERIFY_PASSWORD(credentials.password, parsed_hash) FAILS THEN
+        RETURN Error(401 UNAUTHORIZED)
+    END IF
 
     // Create session
-    let session_id = Uuid::new_v4().to_string();
-    session_store::set(&session_store, &session_id, user.id, Duration::from_secs(86400))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    session_id ← GENERATE_UUID_V4()
+    SESSION_STORE_SET(session_store, session_id, user.id, ttl ← 86400 seconds)
 
-    let cookie = Cookie::build(("session_id", session_id))
-        .http_only(true)
-        .secure(true)
-        .same_site(SameSite::Strict)
-        .max_age(time::Duration::days(1))
-        .path("/")
-        .build();
+    cookie ← BUILD_COOKIE("session_id", session_id,
+        http_only ← TRUE,
+        secure ← TRUE,
+        same_site ← Strict,
+        max_age ← 1 day,
+        path ← "/"
+    )
 
-    Ok((jar.add(cookie), StatusCode::OK))
-}
+    RETURN Ok(cookie_jar.ADD(cookie), 200 OK)
 ```
 
 Key cookie properties:
@@ -58,35 +43,27 @@ Key cookie properties:
 
 JWTs are self-contained tokens. The server signs them; clients send them in the `Authorization` header. No server-side session storage needed. The server verifies the signature to trust the claims.
 
-```rust
-use jsonwebtoken::{encode, decode, Header, Algorithm, Validation, EncodingKey, DecodingKey};
-use serde::{Deserialize, Serialize};
-use chrono::Utc;
+```text
+STRUCTURE Claims
+    sub : String       // user id
+    role : String      // user role
+    exp : Integer      // expiration (UNIX timestamp)
+    iat : Integer      // issued at
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,       // user id
-    role: String,      // user role
-    exp: usize,        // expiration (UNIX timestamp)
-    iat: usize,        // issued at
-}
+PROCEDURE CREATE_JWT(user_id, role, secret) → Result<String>
+    now ← CURRENT_UNIX_TIMESTAMP()
+    claims ← Claims {
+        sub ← user_id,
+        role ← role,
+        exp ← now + 3600,  // 1 hour
+        iat ← now
+    }
+    RETURN JWT_ENCODE(header ← DEFAULT_HEADER, claims, signing_key ← secret)
 
-fn create_jwt(user_id: &str, role: &str, secret: &[u8]) -> Result<String, jsonwebtoken::errors::Error> {
-    let now = Utc::now().timestamp() as usize;
-    let claims = Claims {
-        sub: user_id.to_string(),
-        role: role.to_string(),
-        exp: now + 3600,  // 1 hour
-        iat: now,
-    };
-    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret))
-}
-
-fn verify_jwt(token: &str, secret: &[u8]) -> Result<Claims, jsonwebtoken::errors::Error> {
-    let validation = Validation::new(Algorithm::HS256);
-    let token_data = decode::<Claims>(token, &DecodingKey::from_secret(secret), &validation)?;
-    Ok(token_data.claims)
-}
+PROCEDURE VERIFY_JWT(token, secret) → Result<Claims>
+    validation ← NEW Validation(algorithm ← HS256)
+    token_data ← JWT_DECODE(token, decoding_key ← secret, validation)
+    RETURN Ok(token_data.claims)
 ```
 
 **When to use JWTs:** Distributed systems or microservices that need to verify identity without calling a central session store. APIs consumed by mobile apps or SPAs. Accept that revocation requires a blocklist or short-lived tokens with refresh rotation.
@@ -126,25 +103,15 @@ Attackers stole OAuth tokens issued to Heroku and Travis CI that were stored as 
 
 Never store passwords in plaintext or use fast hashing algorithms (MD5, SHA-256). Use a memory-hard, slow-by-design algorithm like Argon2, the winner of the 2015 Password Hashing Competition.
 
-```rust
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
+```text
+PROCEDURE HASH_PASSWORD(password) → Result<String>
+    salt ← GENERATE_RANDOM_SALT()
+    hash ← ARGON2_HASH(password, salt)
+    RETURN Ok(TO_STRING(hash))
 
-fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let hash = argon2.hash_password(password.as_bytes(), &salt)?;
-    Ok(hash.to_string())
-}
-
-fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::password_hash::Error> {
-    let parsed_hash = PasswordHash::new(hash)?;
-    Ok(Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok())
-}
+PROCEDURE VERIFY_PASSWORD(password, hash) → Result<Boolean>
+    parsed_hash ← PARSE_PASSWORD_HASH(hash)
+    RETURN Ok(ARGON2_VERIFY(password, parsed_hash) SUCCEEDS)
 ```
 
 Why Argon2 over bcrypt or scrypt: Argon2 is memory-hard, making GPU-based cracking significantly more expensive. It offers tunable parameters for memory, iterations, and parallelism. The default parameters in the `argon2` crate are suitable for most applications.
@@ -158,23 +125,20 @@ MFA requires users to present two or more independent authentication factors:
 
 **TOTP (Time-based One-Time Password):** The most common MFA implementation. The server and user share a secret key. Both compute a 6-digit code based on the current time (30-second windows). The `totp-rs` crate implements this in Rust.
 
-```rust
-use totp_rs::{Algorithm, TOTP, Secret};
+```text
+PROCEDURE GENERATE_TOTP_SECRET() → TOTP
+    secret ← GENERATE_RANDOM_SECRET()
+    totp ← NEW TOTP(
+        algorithm ← SHA1,
+        digits ← 6,
+        skew ← 1,          // allow 1 step before/after
+        step_seconds ← 30,
+        secret ← secret
+    )
+    RETURN totp
 
-fn generate_totp_secret() -> TOTP {
-    let secret = Secret::generate_secret();
-    TOTP::new(
-        Algorithm::SHA1,
-        6,      // digits
-        1,      // skew (allow 1 step before/after)
-        30,     // step in seconds
-        secret.to_bytes().unwrap(),
-    ).unwrap()
-}
-
-fn verify_totp(totp: &TOTP, code: &str) -> bool {
-    totp.check_current(code).unwrap_or(false)
-}
+PROCEDURE VERIFY_TOTP(totp, code) → Boolean
+    RETURN totp.CHECK_CURRENT(code)
 ```
 
 **WebAuthn / Passkeys:** The modern standard for phishing-resistant authentication. Uses public-key cryptography tied to a device. The private key never leaves the authenticator (hardware key or platform authenticator). Eliminates password reuse, phishing, and credential stuffing entirely. Adoption is accelerating as browsers and operating systems add native support.

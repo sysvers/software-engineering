@@ -35,36 +35,27 @@ The most common violation is the "God handler" — an HTTP endpoint that mixes t
 
 ### The Separated Pattern
 
-```rust
+```text
 // Transport layer: only HTTP concerns
-async fn create_order_handler(
-    State(service): State<Arc<OrderService>>,
-    Claims(user): Claims,
-    Json(req): Json<CreateOrderRequest>,
-) -> Result<Json<OrderResponse>, ApiError> {
-    let order = service.create_order(user.id, req.into()).await?;
-    Ok(Json(order.into()))
-}
+PROCEDURE CREATE_ORDER_HANDLER(service, user, request):
+    order ← AWAIT service.CREATE_ORDER(user.id, request)
+    IF order IS error THEN RETURN ApiError
+    RETURN JSON(order)
 
 // Application layer: orchestrates the use case
-impl OrderService {
-    async fn create_order(&self, user_id: UserId, input: CreateOrderInput) -> Result<Order, OrderError> {
-        self.auth.check_permission(user_id, Permission::CreateOrder)?;
-        let order = Order::new(user_id, input.items)?;
-        self.repo.save(&order).await?;
-        self.events.publish(OrderCreated::from(&order)).await?;
-        Ok(order)
-    }
-}
+PROCEDURE CREATE_ORDER(service, user_id, input):
+    CHECK_PERMISSION(user_id, CreateOrder)
+    order ← NEW_ORDER(user_id, input.items)
+    IF order IS error THEN RETURN error
+    AWAIT service.repo.SAVE(order)
+    AWAIT service.events.PUBLISH(OrderCreated FROM order)
+    RETURN order
 
 // Domain layer: pure business rules, no imports from infrastructure
-impl Order {
-    fn new(user_id: UserId, items: Vec<OrderItem>) -> Result<Self, OrderError> {
-        if items.is_empty() { return Err(OrderError::EmptyOrder); }
-        let total = items.iter().map(|i| i.line_total()).sum();
-        Ok(Self { id: OrderId::generate(), user_id, items, total, status: OrderStatus::Pending })
-    }
-}
+PROCEDURE NEW_ORDER(user_id, items):
+    IF items IS empty THEN RETURN Error(EmptyOrder)
+    total ← SUM OF LINE_TOTAL(item) FOR EACH item IN items
+    RETURN Order { id ← GENERATE_ID(), user_id, items, total, status ← Pending }
 ```
 
 Each layer has one concern. The HTTP handler knows nothing about databases. The domain knows nothing about HTTP. Testing the domain requires no infrastructure at all.
@@ -106,37 +97,31 @@ Rust does not have a DI framework like Spring (Java) or .NET's built-in containe
 
 #### Generic-Based Injection
 
-```rust
+```text
 // The abstraction: defined in the domain layer
-#[async_trait]
-pub trait OrderRepository: Send + Sync {
-    async fn save(&self, order: &Order) -> Result<(), RepositoryError>;
-    async fn find_by_id(&self, id: &OrderId) -> Result<Option<Order>, RepositoryError>;
-}
+INTERFACE OrderRepository:
+    PROCEDURE SAVE(order) → Result
+    PROCEDURE FIND_BY_ID(id) → optional Order or Error
 
 // The high-level module: depends on the abstraction, not a concrete type
-pub struct OrderService<R: OrderRepository> {
-    repo: R,
-}
+STRUCTURE OrderService:
+    repo ← OrderRepository
 
-impl<R: OrderRepository> OrderService<R> {
-    pub fn new(repo: R) -> Self {
-        Self { repo }
-    }
+PROCEDURE NEW_ORDER_SERVICE(repo):
+    RETURN OrderService { repo ← repo }
 
-    pub async fn get_order(&self, id: &OrderId) -> Result<Order, AppError> {
-        self.repo.find_by_id(id).await?
-            .ok_or(AppError::NotFound)
-    }
-}
+PROCEDURE GET_ORDER(service, id):
+    result ← AWAIT service.repo.FIND_BY_ID(id)
+    IF result IS NOT found THEN RETURN Error(NotFound)
+    RETURN result
 
 // Production: uses PostgreSQL
-let repo = PostgresOrderRepo::new(pool);
-let service = OrderService::new(repo);
+repo ← NEW PostgresOrderRepo(pool)
+service ← NEW_ORDER_SERVICE(repo)
 
 // Test: uses in-memory fake
-let repo = InMemoryOrderRepo::new();
-let service = OrderService::new(repo);
+repo ← NEW InMemoryOrderRepo()
+service ← NEW_ORDER_SERVICE(repo)
 ```
 
 The compiler monomorphizes `OrderService<PostgresOrderRepo>` and `OrderService<InMemoryOrderRepo>` into separate, specialized types. There is no vtable, no dynamic dispatch, no runtime cost.
@@ -145,24 +130,19 @@ The compiler monomorphizes `OrderService<PostgresOrderRepo>` and `OrderService<I
 
 When you need to decide the implementation at runtime (e.g., based on configuration) or want to avoid generic proliferation, use trait objects:
 
-```rust
-pub struct OrderService {
-    repo: Arc<dyn OrderRepository>,
-}
+```text
+STRUCTURE OrderService:
+    repo ← shared reference to OrderRepository (dynamic dispatch)
 
-impl OrderService {
-    pub fn new(repo: Arc<dyn OrderRepository>) -> Self {
-        Self { repo }
-    }
-}
+PROCEDURE NEW_ORDER_SERVICE(repo):
+    RETURN OrderService { repo ← repo }
 
 // Wiring at the composition root (main.rs)
-let repo: Arc<dyn OrderRepository> = if config.use_mock_db {
-    Arc::new(InMemoryOrderRepo::new())
-} else {
-    Arc::new(PostgresOrderRepo::new(pool))
-};
-let service = OrderService::new(repo);
+IF config.use_mock_db THEN
+    repo ← NEW InMemoryOrderRepo()
+ELSE
+    repo ← NEW PostgresOrderRepo(pool)
+service ← NEW_ORDER_SERVICE(repo)
 ```
 
 This incurs a small runtime cost (dynamic dispatch through a vtable), which is negligible for I/O-bound operations like database access.

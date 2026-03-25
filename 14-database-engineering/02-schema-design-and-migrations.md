@@ -129,11 +129,9 @@ sqlx migrate run
 sqlx migrate revert
 ```
 
-```rust
+```text
 // Run migrations at application startup (embedded in binary)
-sqlx::migrate!("./migrations")
-    .run(&pool)
-    .await?;
+AWAIT RUN_MIGRATIONS("./migrations", pool)
 ```
 
 The `sqlx::migrate!` macro embeds migration files into the binary at compile time. No need to ship migration files alongside the binary in production.
@@ -156,36 +154,25 @@ diesel migration revert
 diesel print-schema > src/schema.rs
 ```
 
-```rust
+```text
 // migrations/2024-01-15-000001_create_users/up.sql
-CREATE TABLE users (
-    id          BIGSERIAL PRIMARY KEY,
-    email       TEXT NOT NULL UNIQUE,
-    name        TEXT NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+// (SQL content -- see the SQL migration files)
+// Creates users table with id, email, name, created_at columns
 
 // migrations/2024-01-15-000001_create_users/down.sql
-DROP TABLE users;
+// Drops the users table
 ```
 
 #### Refinery
 
 A standalone migration runner that works with any database library. Supports SQL and Rust-based migrations.
 
-```rust
-use refinery::config::Config;
+```text
+// Embed migrations from "./migrations" directory
 
-mod embedded {
-    use refinery::embed_migrations;
-    embed_migrations!("./migrations");
-}
-
-async fn run_migrations(db_url: &str) -> Result<(), refinery::Error> {
-    let mut config = Config::from_db_uri(db_url)?;
-    embedded::migrations::runner().run_async(&mut config).await?;
-    Ok(())
-}
+PROCEDURE RUN_MIGRATIONS(db_url):
+    config ← CONFIG_FROM_DB_URI(db_url)
+    AWAIT EMBEDDED_MIGRATIONS.RUNNER().RUN_ASYNC(config)
 ```
 
 ---
@@ -236,46 +223,30 @@ ALTER TABLE users VALIDATE CONSTRAINT users_phone_not_null;
 
 Never `UPDATE users SET new_col = computed_value` on a 100-million-row table. It creates a massive transaction that locks the table and fills the WAL.
 
-```rust
-async fn backfill_in_batches(pool: &sqlx::PgPool) -> anyhow::Result<()> {
-    let batch_size: i64 = 10_000;
-    let mut last_id: i64 = 0;
+```text
+PROCEDURE BACKFILL_IN_BATCHES(pool):
+    batch_size ← 10000
+    last_id ← 0
 
-    loop {
-        let result = sqlx::query(
+    LOOP:
+        result ← AWAIT EXECUTE pool:
             "UPDATE users
              SET phone = 'unknown'
-             WHERE id > $1 AND id <= $2 AND phone IS NULL"
-        )
-        .bind(last_id)
-        .bind(last_id + batch_size)
-        .execute(pool)
-        .await?;
+             WHERE id > last_id AND id ≤ last_id + batch_size AND phone IS NULL"
 
-        if result.rows_affected() == 0 {
+        IF result.rows_affected = 0 THEN
             // Check if we've passed the max ID
-            let max_id: Option<i64> = sqlx::query_scalar(
-                "SELECT MAX(id) FROM users"
-            )
-            .fetch_one(pool)
-            .await?;
+            max_id ← AWAIT QUERY pool: "SELECT MAX(id) FROM users"
 
-            match max_id {
-                Some(max) if last_id + batch_size < max => {
-                    last_id += batch_size;
-                    continue;
-                }
-                _ => break,
-            }
-        }
+            IF max_id IS present AND last_id + batch_size < max_id THEN
+                last_id ← last_id + batch_size
+                CONTINUE
+            ELSE
+                BREAK
 
-        last_id += batch_size;
+        last_id ← last_id + batch_size
         // Optional: sleep to reduce load
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
-    Ok(())
-}
+        SLEEP 100 milliseconds
 ```
 
 ---

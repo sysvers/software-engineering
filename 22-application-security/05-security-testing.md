@@ -128,17 +128,16 @@ cargo fuzz init
 cargo fuzz add parse_input
 ```
 
-```rust
-// fuzz/fuzz_targets/parse_input.rs
-#![no_main]
-use libfuzzer_sys::fuzz_target;
+```text
+// fuzz/fuzz_targets/parse_input
+// Fuzz target definition
 
-fuzz_target!(|data: &[u8]| {
-    if let Ok(s) = std::str::from_utf8(data) {
-        // Fuzz your parser -- it should never panic
-        let _ = my_crate::parse_input(s);
-    }
-});
+FUZZ_TARGET(data : bytes):
+    IF data IS VALID UTF-8 THEN
+        s ← CONVERT_TO_STRING(data)
+        // Fuzz the parser -- it should never panic
+        CALL PARSE_INPUT(s)    // ignore result, just check it does not crash
+    END IF
 ```
 
 ```bash
@@ -153,22 +152,20 @@ cargo fuzz run parse_input -- -max_total_time=300
 
 Not traditional fuzzing, but serves a similar purpose: automatically generating inputs to find edge cases.
 
-```rust
-use proptest::prelude::*;
+```text
+// Property-based tests with automatically generated inputs
 
-proptest! {
-    #[test]
-    fn parse_never_panics(input in "\\PC*") {
-        // Property: parse_input should never panic, regardless of input
-        let _ = parse_input(&input);
-    }
+TEST parse_never_panics:
+    FOR EACH input IN RANDOM_PRINTABLE_STRINGS DO
+        // Property: PARSE_INPUT should never panic, regardless of input
+        CALL PARSE_INPUT(input)    // ignore result, just verify no crash
+    END FOR
 
-    #[test]
-    fn validated_email_roundtrips(email in "[a-z]{1,10}@[a-z]{1,10}\\.[a-z]{2,4}") {
-        let parsed = EmailAddress::parse(&email).unwrap();
-        assert_eq!(parsed.as_str(), email);
-    }
-}
+TEST validated_email_roundtrips:
+    FOR EACH email IN RANDOM_STRINGS MATCHING "[a-z]{1,10}@[a-z]{1,10}.[a-z]{2,4}" DO
+        parsed ← EmailAddress.PARSE(email)
+        ASSERT parsed.AS_STRING() = email
+    END FOR
 ```
 
 ## Dependency Scanning

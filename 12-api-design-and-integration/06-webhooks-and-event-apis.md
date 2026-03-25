@@ -173,26 +173,17 @@ Client-side (verifying):
 
 **Rust implementation for signing:**
 
-```rust
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use hex;
+```text
+PROCEDURE SIGN_PAYLOAD(payload, secret):
+    mac ← NEW HMAC-SHA256 with key = secret
+    mac.UPDATE(payload)
+    result ← mac.FINALIZE()
+    RETURN "sha256=" + HEX_ENCODE(result)
 
-type HmacSha256 = Hmac<Sha256>;
-
-fn sign_payload(payload: &[u8], secret: &[u8]) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret)
-        .expect("HMAC can take key of any size");
-    mac.update(payload);
-    let result = mac.finalize();
-    format!("sha256={}", hex::encode(result.into_bytes()))
-}
-
-fn verify_signature(payload: &[u8], secret: &[u8], signature: &str) -> bool {
-    let expected = sign_payload(payload, secret);
+PROCEDURE VERIFY_SIGNATURE(payload, secret, signature):
+    expected ← SIGN_PAYLOAD(payload, secret)
     // Constant-time comparison to prevent timing attacks
-    constant_time_eq(expected.as_bytes(), signature.as_bytes())
-}
+    RETURN CONSTANT_TIME_EQUAL(expected, signature)
 ```
 
 ### Timestamp Verification

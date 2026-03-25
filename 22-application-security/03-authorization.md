@@ -6,52 +6,27 @@ Authorization answers the question: "What are you allowed to do?" It is enforced
 
 Users are assigned roles. Roles have permissions. The system checks whether the user's role grants the required permission for an action. RBAC is simple, auditable, and sufficient for most applications.
 
-```rust
-use std::collections::HashSet;
-use axum::http::StatusCode;
+```text
+ENUMERATION Permission
+    ReadOrders, CreateOrders, DeleteOrders, ManageUsers, ViewAnalytics
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Permission {
-    ReadOrders,
-    CreateOrders,
-    DeleteOrders,
-    ManageUsers,
-    ViewAnalytics,
-}
+ENUMERATION Role
+    Viewer, Editor, Admin
 
-#[derive(Debug, Clone)]
-enum Role {
-    Viewer,
-    Editor,
-    Admin,
-}
+PROCEDURE PERMISSIONS_FOR_ROLE(role) → Set<Permission>
+    MATCH role
+        CASE Viewer  → RETURN {ReadOrders, ViewAnalytics}
+        CASE Editor  → RETURN {ReadOrders, CreateOrders, ViewAnalytics}
+        CASE Admin   → RETURN {ReadOrders, CreateOrders, DeleteOrders,
+                                ManageUsers, ViewAnalytics}
 
-fn permissions_for_role(role: &Role) -> HashSet<Permission> {
-    match role {
-        Role::Viewer => HashSet::from([Permission::ReadOrders, Permission::ViewAnalytics]),
-        Role::Editor => HashSet::from([
-            Permission::ReadOrders,
-            Permission::CreateOrders,
-            Permission::ViewAnalytics,
-        ]),
-        Role::Admin => HashSet::from([
-            Permission::ReadOrders,
-            Permission::CreateOrders,
-            Permission::DeleteOrders,
-            Permission::ManageUsers,
-            Permission::ViewAnalytics,
-        ]),
-    }
-}
-
-fn authorize(user: &AuthenticatedUser, required: Permission) -> Result<(), StatusCode> {
-    let perms = permissions_for_role(&user.role);
-    if perms.contains(&required) {
-        Ok(())
-    } else {
-        Err(StatusCode::FORBIDDEN)
-    }
-}
+PROCEDURE AUTHORIZE(user, required_permission) → Result
+    perms ← PERMISSIONS_FOR_ROLE(user.role)
+    IF required_permission IN perms THEN
+        RETURN Ok
+    ELSE
+        RETURN Error(403 FORBIDDEN)
+    END IF
 ```
 
 **When to use RBAC:** Your authorization rules map cleanly to a small number of roles (viewer, editor, admin). You need simple, auditable access control. Most web applications and internal tools fit this model.
@@ -64,46 +39,37 @@ Decisions based on attributes of the user, the resource, the action, and the env
 
 Example policy: "A user can edit a document if they are in the same department AND the document is not archived AND it is during business hours."
 
-```rust
-use chrono::{Utc, Weekday, Timelike};
+```text
+STRUCTURE PolicyContext
+    user : AuthenticatedUser
+    resource : Document
+    action : Action
 
-struct PolicyContext<'a> {
-    user: &'a AuthenticatedUser,
-    resource: &'a Document,
-    action: Action,
-}
+ENUMERATION Action
+    Read, Edit, Delete
 
-enum Action {
-    Read,
-    Edit,
-    Delete,
-}
-
-fn evaluate_policy(ctx: &PolicyContext) -> bool {
-    match ctx.action {
-        Action::Edit => {
+PROCEDURE EVALUATE_POLICY(ctx) → Boolean
+    MATCH ctx.action
+        CASE Edit:
             // User must be in the same department
-            let same_dept = ctx.user.department == ctx.resource.department;
+            same_dept ← ctx.user.department = ctx.resource.department
             // Document must not be archived
-            let not_archived = !ctx.resource.is_archived;
+            not_archived ← NOT ctx.resource.is_archived
             // Must be during business hours (9-17 UTC, weekdays)
-            let now = Utc::now();
-            let is_business_hours = now.hour() >= 9
-                && now.hour() < 17
-                && !matches!(now.weekday(), Weekday::Sat | Weekday::Sun);
+            now ← CURRENT_UTC_TIME()
+            is_business_hours ← now.hour ≥ 9
+                AND now.hour < 17
+                AND now.weekday NOT IN {Saturday, Sunday}
+            RETURN same_dept AND not_archived AND is_business_hours
 
-            same_dept && not_archived && is_business_hours
-        }
-        Action::Read => {
+        CASE Read:
             // Any authenticated user in the same department can read
-            ctx.user.department == ctx.resource.department
-        }
-        Action::Delete => {
+            RETURN ctx.user.department = ctx.resource.department
+
+        CASE Delete:
             // Only department heads can delete
-            ctx.user.is_department_head && ctx.user.department == ctx.resource.department
-        }
-    }
-}
+            RETURN ctx.user.is_department_head
+                AND ctx.user.department = ctx.resource.department
 ```
 
 **When to use ABAC:** Authorization depends on resource attributes, environmental conditions, or relationships. RBAC leads to too many roles or cannot express your access rules. Common in healthcare (HIPAA), finance, and multi-tenant SaaS.
@@ -133,42 +99,23 @@ permit(
 
 Enforce authorization as middleware so that individual handlers do not need to repeat checks.
 
-```rust
-use axum::{
-    extract::Request,
-    http::StatusCode,
-    middleware::{self, Next},
-    response::Response,
-    Extension,
-};
+```text
+PROCEDURE REQUIRE_PERMISSION(required_permission) → Middleware
+    RETURN MIDDLEWARE(request, next):
+        user ← request.EXTENSIONS().GET(AuthenticatedUser)
+        IF user IS NULL THEN RETURN Error(401 UNAUTHORIZED)
 
-async fn require_permission(
-    required: Permission,
-) -> impl Fn(Request, Next) -> futures::future::BoxFuture<'static, Result<Response, StatusCode>> {
-    move |request: Request, next: Next| {
-        let required = required.clone();
-        Box::pin(async move {
-            let user = request
-                .extensions()
-                .get::<AuthenticatedUser>()
-                .ok_or(StatusCode::UNAUTHORIZED)?;
+        AUTHORIZE(user, required_permission)
+        IF authorization FAILS THEN RETURN Error(403 FORBIDDEN)
 
-            authorize(user, required)?;
-            Ok(next.run(request).await)
-        })
-    }
-}
+        RETURN next.RUN(request)
 
 // Usage in router
-let app = Router::new()
-    .route("/orders", get(list_orders))
-    .route_layer(middleware::from_fn(move |req, next| {
-        require_permission(Permission::ReadOrders)(req, next)
-    }))
-    .route("/admin/users", get(list_users))
-    .route_layer(middleware::from_fn(move |req, next| {
-        require_permission(Permission::ManageUsers)(req, next)
-    }));
+app ← Router
+    .ROUTE("/orders", GET(LIST_ORDERS))
+    .ADD_LAYER(REQUIRE_PERMISSION(ReadOrders))
+    .ROUTE("/admin/users", GET(LIST_USERS))
+    .ADD_LAYER(REQUIRE_PERMISSION(ManageUsers))
 ```
 
 This pattern ensures that authorization is enforced at the routing layer, not scattered across individual handler functions. Missing an authorization check on a new endpoint is a common source of access control vulnerabilities.
@@ -177,32 +124,21 @@ This pattern ensures that authorization is enforced at the routing layer, not sc
 
 Sometimes authorization depends not just on the role, but on the relationship between the user and the specific resource. This is common for multi-tenant systems and collaborative applications.
 
-```rust
-async fn update_project(
-    Path(project_id): Path<u64>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Extension(pool): Extension<PgPool>,
-    Json(payload): Json<UpdateProject>,
-) -> Result<Json<Project>, StatusCode> {
-    let project = db::get_project(&pool, project_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+```text
+PROCEDURE UPDATE_PROJECT(project_id, user, pool, payload) → Result<Project>
+    project ← DB_GET_PROJECT(pool, project_id)
+    IF project NOT FOUND THEN RETURN Error(404 NOT FOUND)
 
     // Check: user must be a member of this project with edit permission
-    let membership = db::get_project_membership(&pool, project_id, user.id)
-        .await
-        .map_err(|_| StatusCode::FORBIDDEN)?;
+    membership ← DB_GET_PROJECT_MEMBERSHIP(pool, project_id, user.id)
+    IF membership NOT FOUND THEN RETURN Error(403 FORBIDDEN)
 
-    if membership.role < ProjectRole::Editor {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    IF membership.role < ProjectRole.Editor THEN
+        RETURN Error(403 FORBIDDEN)
+    END IF
 
-    let updated = db::update_project(&pool, project_id, payload)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(updated))
-}
+    updated ← DB_UPDATE_PROJECT(pool, project_id, payload)
+    RETURN Ok(updated)
 ```
 
 ## Real-World Examples

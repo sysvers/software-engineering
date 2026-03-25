@@ -43,25 +43,21 @@ log_level = "info"
 
 **Loading configuration in Rust:**
 
-```rust
-use config::{Config, Environment, File};
+```text
+STRUCTURE AppConfig:
+    database ← DatabaseConfig
+    server ← ServerConfig
 
-#[derive(Deserialize)]
-struct AppConfig {
-    database: DatabaseConfig,
-    server: ServerConfig,
-}
+PROCEDURE LOAD_CONFIG():
+    env ← GET_ENV("APP_ENV") OR DEFAULT "development"
 
-fn load_config() -> Result<AppConfig, config::ConfigError> {
-    let env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
+    config ← ConfigBuilder
+        .ADD_SOURCE(File "config/default")
+        .ADD_SOURCE(File "config/{env}", optional)
+        .ADD_SOURCE(Environment with prefix "APP", separator "__")
+        .BUILD()
 
-    Config::builder()
-        .add_source(File::with_name("config/default"))
-        .add_source(File::with_name(&format!("config/{env}")).required(false))
-        .add_source(Environment::with_prefix("APP").separator("__"))
-        .build()?
-        .try_deserialize()
-}
+    RETURN DESERIALIZE config AS AppConfig
 ```
 
 **Priority order (later overrides earlier):**
@@ -85,33 +81,28 @@ Feature flags decouple deployment from release. You deploy code to production bu
 
 **Feature flag evaluation:**
 
-```rust
-struct FeatureFlags {
-    flags: HashMap<String, FlagConfig>,
-}
+```text
+STRUCTURE FeatureFlags:
+    flags ← map of string → FlagConfig
 
-enum FlagConfig {
-    Boolean(bool),
-    Percentage(f64),                    // Roll out to X% of users
-    UserList(HashSet<String>),          // Specific users only
-    Rule(Box<dyn Fn(&User) -> bool>),  // Custom targeting
-}
+ENUMERATION FlagConfig:
+    Boolean(value)
+    Percentage(percent)               // Roll out to X% of users
+    UserList(set of user IDs)         // Specific users only
+    Rule(custom function)             // Custom targeting
 
-impl FeatureFlags {
-    fn is_enabled(&self, flag: &str, user: &User) -> bool {
-        match self.flags.get(flag) {
-            Some(FlagConfig::Boolean(v)) => *v,
-            Some(FlagConfig::Percentage(pct)) => {
-                // Deterministic: same user always gets the same result
-                let hash = hash_user_flag(user.id, flag);
-                (hash % 100) as f64 / 100.0 < *pct
-            }
-            Some(FlagConfig::UserList(users)) => users.contains(&user.id),
-            Some(FlagConfig::Rule(rule)) => rule(user),
-            None => false,
-        }
-    }
-}
+PROCEDURE IS_ENABLED(feature_flags, flag_name, user):
+    config ← LOOKUP flag_name IN feature_flags.flags
+
+    MATCH config:
+        Boolean(value) → RETURN value
+        Percentage(pct) →
+            // Deterministic: same user always gets the same result
+            hash ← HASH_USER_FLAG(user.id, flag_name)
+            RETURN (hash MOD 100) / 100.0 < pct
+        UserList(users) → RETURN user.id IN users
+        Rule(rule) → RETURN rule(user)
+        None → RETURN false
 ```
 
 **Feature flag lifecycle:**
@@ -151,12 +142,11 @@ api_keys:
 **HashiCorp Vault:**
 A centralized secrets management system. Applications authenticate to Vault and retrieve secrets at runtime.
 
-```rust
+```text
 // Application fetches secrets from Vault at startup
-async fn get_database_url(vault: &VaultClient) -> Result<String, Error> {
-    let secret = vault.read_secret("secret/data/myapp/database").await?;
-    Ok(secret.get("url").unwrap().to_string())
-}
+PROCEDURE GET_DATABASE_URL(vault):
+    secret ← AWAIT vault.READ_SECRET("secret/data/myapp/database")
+    RETURN secret["url"]
 ```
 
 **Secrets rotation:** Secrets should be rotated regularly. Vault can automatically rotate database credentials, generating new passwords and updating the database — without application downtime.

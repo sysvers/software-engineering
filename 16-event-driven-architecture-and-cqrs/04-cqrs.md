@@ -37,133 +37,94 @@ The write model focuses on invariants and business rules. The read model focuses
 
 ### Write Side: Command Handling
 
-```rust
+```text
 // Commands -- requests to change state
-enum OrderCommand {
-    PlaceOrder { customer_id: String, items: Vec<OrderItem> },
-    CancelOrder { order_id: OrderId, reason: String },
-    ShipOrder { order_id: OrderId, tracking_number: String },
-}
+ENUMERATION OrderCommand:
+    PlaceOrder { customer_id, items }
+    CancelOrder { order_id, reason }
+    ShipOrder { order_id, tracking_number }
 
 // Events -- results of successful commands
-enum OrderEvent {
-    OrderPlaced { order_id: OrderId, customer_id: String, items: Vec<OrderItem>, placed_at: DateTime<Utc> },
-    OrderCancelled { order_id: OrderId, reason: String, cancelled_at: DateTime<Utc> },
-    OrderShipped { order_id: OrderId, tracking_number: String, shipped_at: DateTime<Utc> },
-}
+ENUMERATION OrderEvent:
+    OrderPlaced { order_id, customer_id, items, placed_at }
+    OrderCancelled { order_id, reason, cancelled_at }
+    OrderShipped { order_id, tracking_number, shipped_at }
 
 // Write model -- enforces business rules
-struct OrderAggregate {
-    id: OrderId,
-    status: OrderStatus,
-    items: Vec<OrderItem>,
-    customer_id: String,
-    version: i32,
-}
+STRUCTURE OrderAggregate:
+    id ← OrderId
+    status ← OrderStatus
+    items ← list of OrderItem
+    customer_id ← string
+    version ← integer
 
-impl OrderAggregate {
-    fn handle_command(&self, cmd: OrderCommand) -> Result<Vec<OrderEvent>, OrderError> {
-        match cmd {
-            OrderCommand::PlaceOrder { items, customer_id } => {
-                if items.is_empty() {
-                    return Err(OrderError::EmptyOrder);
-                }
-                if items.len() > 100 {
-                    return Err(OrderError::TooManyItems);
-                }
-                Ok(vec![OrderEvent::OrderPlaced {
-                    order_id: OrderId::new(),
-                    customer_id,
-                    items,
-                    placed_at: Utc::now(),
-                }])
-            }
-            OrderCommand::CancelOrder { order_id, reason } => {
-                if self.status == OrderStatus::Shipped {
-                    return Err(OrderError::CannotCancelShippedOrder);
-                }
-                if self.status == OrderStatus::Cancelled {
-                    return Err(OrderError::AlreadyCancelled);
-                }
-                Ok(vec![OrderEvent::OrderCancelled {
-                    order_id,
-                    reason,
-                    cancelled_at: Utc::now(),
-                }])
-            }
-            OrderCommand::ShipOrder { order_id, tracking_number } => {
-                if self.status != OrderStatus::Placed {
-                    return Err(OrderError::InvalidStatusForShipping);
-                }
-                Ok(vec![OrderEvent::OrderShipped {
-                    order_id,
-                    tracking_number,
-                    shipped_at: Utc::now(),
-                }])
-            }
-        }
-    }
-}
+PROCEDURE HANDLE_COMMAND(aggregate, cmd):
+    MATCH cmd:
+        PlaceOrder { items, customer_id } →
+            IF items IS empty THEN
+                RETURN Error(EmptyOrder)
+            IF LENGTH(items) > 100 THEN
+                RETURN Error(TooManyItems)
+            RETURN [OrderPlaced {
+                order_id ← NEW_ORDER_ID(), customer_id,
+                items, placed_at ← NOW()
+            }]
+
+        CancelOrder { order_id, reason } →
+            IF aggregate.status = Shipped THEN
+                RETURN Error(CannotCancelShippedOrder)
+            IF aggregate.status = Cancelled THEN
+                RETURN Error(AlreadyCancelled)
+            RETURN [OrderCancelled {
+                order_id, reason, cancelled_at ← NOW()
+            }]
+
+        ShipOrder { order_id, tracking_number } →
+            IF aggregate.status ≠ Placed THEN
+                RETURN Error(InvalidStatusForShipping)
+            RETURN [OrderShipped {
+                order_id, tracking_number, shipped_at ← NOW()
+            }]
 ```
 
 ### Read Side: Projections for Queries
 
-```rust
+```text
 // Read model -- optimized for queries, completely denormalized
-struct OrderListView {
-    pool: PgPool,
-}
+STRUCTURE OrderListView:
+    pool ← PgPool
 
-impl OrderListView {
-    /// Update the read model when events occur.
-    async fn on_event(&self, event: &OrderEvent) -> Result<(), Error> {
-        match event {
-            OrderEvent::OrderPlaced { order_id, customer_id, items, placed_at } => {
-                sqlx::query!(
-                    "INSERT INTO order_list_view (id, customer_id, item_count, total, status, placed_at)
-                     VALUES ($1, $2, $3, $4, 'placed', $5)",
-                    order_id.as_ref(), customer_id, items.len() as i32,
-                    items.iter().map(|i| i.price).sum::<f64>(),
-                    placed_at
-                ).execute(&self.pool).await?;
-            }
-            OrderEvent::OrderCancelled { order_id, cancelled_at, .. } => {
-                sqlx::query!(
-                    "UPDATE order_list_view SET status = 'cancelled', cancelled_at = $2
-                     WHERE id = $1",
-                    order_id.as_ref(), cancelled_at
-                ).execute(&self.pool).await?;
-            }
-            OrderEvent::OrderShipped { order_id, tracking_number, shipped_at } => {
-                sqlx::query!(
-                    "UPDATE order_list_view SET status = 'shipped', tracking = $2, shipped_at = $3
-                     WHERE id = $1",
-                    order_id.as_ref(), tracking_number, shipped_at
-                ).execute(&self.pool).await?;
-            }
-        }
-        Ok(())
-    }
+/// Update the read model when events occur.
+PROCEDURE ON_EVENT(view, event):
+    MATCH event:
+        OrderPlaced { order_id, customer_id, items, placed_at } →
+            AWAIT EXECUTE view.pool:
+                "INSERT INTO order_list_view (id, customer_id, item_count, total, status, placed_at)
+                 VALUES (order_id, customer_id, LENGTH(items), SUM(item.price), 'placed', placed_at)"
 
-    /// Fast queries against the denormalized read model.
-    async fn get_customer_orders(&self, customer_id: &str) -> Result<Vec<OrderSummary>, Error> {
-        sqlx::query_as!(OrderSummary,
-            "SELECT id, item_count, total, status, placed_at
-             FROM order_list_view WHERE customer_id = $1
-             ORDER BY placed_at DESC LIMIT 50",
-            customer_id
-        ).fetch_all(&self.pool).await
-    }
+        OrderCancelled { order_id, cancelled_at, ... } →
+            AWAIT EXECUTE view.pool:
+                "UPDATE order_list_view SET status = 'cancelled', cancelled_at = cancelled_at
+                 WHERE id = order_id"
 
-    async fn search_orders(&self, query: &str) -> Result<Vec<OrderSummary>, Error> {
-        sqlx::query_as!(OrderSummary,
-            "SELECT id, item_count, total, status, placed_at
-             FROM order_list_view WHERE status = $1
-             ORDER BY placed_at DESC",
-            query
-        ).fetch_all(&self.pool).await
-    }
-}
+        OrderShipped { order_id, tracking_number, shipped_at } →
+            AWAIT EXECUTE view.pool:
+                "UPDATE order_list_view SET status = 'shipped', tracking = tracking_number,
+                 shipped_at = shipped_at WHERE id = order_id"
+    RETURN Ok
+
+/// Fast queries against the denormalized read model.
+PROCEDURE GET_CUSTOMER_ORDERS(view, customer_id):
+    RETURN AWAIT QUERY view.pool:
+        "SELECT id, item_count, total, status, placed_at
+         FROM order_list_view WHERE customer_id = customer_id
+         ORDER BY placed_at DESC LIMIT 50"
+
+PROCEDURE SEARCH_ORDERS(view, query):
+    RETURN AWAIT QUERY view.pool:
+        "SELECT id, item_count, total, status, placed_at
+         FROM order_list_view WHERE status = query
+         ORDER BY placed_at DESC"
 ```
 
 ## Eventual Consistency
@@ -174,37 +135,32 @@ In CQRS, the read model is *eventually consistent* with the write model. After a
 
 **Return written data directly.** After a write, return the result to the client without waiting for the projection to update. The user sees their action confirmed immediately.
 
-```rust
-async fn place_order(cmd: PlaceOrderCommand) -> HttpResponse {
-    let events = aggregate.handle_command(cmd)?;
-    store.append(events.clone()).await?;
+```text
+PROCEDURE PLACE_ORDER(cmd):
+    events ← HANDLE_COMMAND(aggregate, cmd)
+    AWAIT store.APPEND(events)
 
     // Return the result directly -- don't query the read model
-    HttpResponse::Ok().json(OrderConfirmation {
-        order_id: events[0].order_id(),
-        status: "placed",
-    })
-}
+    RETURN HTTP 200 JSON {
+        order_id ← events[0].order_id,
+        status ← "placed"
+    }
 ```
 
 **Optimistic UI.** The frontend updates immediately and reconciles later. When a user clicks "Cancel Order," the UI shows it as cancelled before the backend confirms.
 
 **Causal consistency.** Include a version or timestamp so clients know if their read is "fresh enough."
 
-```rust
-async fn get_orders(req: Request) -> HttpResponse {
-    let min_version = req.header("X-Min-Version").unwrap_or(0);
-    let view = order_view.get_customer_orders(&req.customer_id).await?;
+```text
+PROCEDURE GET_ORDERS(request):
+    min_version ← request.HEADER("X-Min-Version") OR DEFAULT 0
+    view ← AWAIT order_view.GET_CUSTOMER_ORDERS(request.customer_id)
 
     // If the read model hasn't caught up, tell the client to retry
-    if view.version < min_version {
-        return HttpResponse::ServiceUnavailable()
-            .header("Retry-After", "1")
-            .finish();
-    }
+    IF view.version < min_version THEN
+        RETURN HTTP 503 with header "Retry-After" ← "1"
 
-    HttpResponse::Ok().json(view)
-}
+    RETURN HTTP 200 JSON(view)
 ```
 
 **Read-your-writes.** Route the writing user's subsequent reads to the write model or a guaranteed-consistent read replica.

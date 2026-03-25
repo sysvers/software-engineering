@@ -19,112 +19,69 @@ This topic covers the full spectrum: from micro-benchmarks of individual functio
 
 Benchmarking is the foundation of performance engineering. Without reliable measurements, optimization is guesswork. The `criterion` crate provides statistically rigorous benchmarking for Rust, automatically detecting performance regressions and producing detailed reports.
 
-```rust
-// Cargo.toml dependencies:
-// [dev-dependencies]
-// criterion = { version = "0.5", features = ["html_reports"] }
-//
-// [[bench]]
-// name = "sorting_bench"
-// harness = false
-
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-
+```text
 /// A naive sorting implementation for comparison.
-fn bubble_sort(data: &mut [u32]) {
-    let n = data.len();
-    for i in 0..n {
-        for j in 0..n - 1 - i {
-            if data[j] > data[j + 1] {
-                data.swap(j, j + 1);
-            }
-        }
-    }
-}
+PROCEDURE BUBBLE_SORT(data)
+    n ← LENGTH(data)
+    FOR i ← 0 TO n - 1 DO
+        FOR j ← 0 TO n - 2 - i DO
+            IF data[j] > data[j + 1] THEN
+                SWAP(data[j], data[j + 1])
+            END IF
+        END FOR
+    END FOR
 
 /// An optimized merge sort that reuses a scratch buffer.
-fn merge_sort_with_buffer(data: &mut [u32], buffer: &mut Vec<u32>) {
-    let len = data.len();
-    if len <= 1 {
-        return;
-    }
-    if len <= 32 {
+PROCEDURE MERGE_SORT_WITH_BUFFER(data, buffer)
+    len ← LENGTH(data)
+    IF len ≤ 1 THEN RETURN
+    IF len ≤ 32 THEN
         // Insertion sort for small arrays -- better cache behavior.
-        for i in 1..len {
-            let key = data[i];
-            let mut j = i;
-            while j > 0 && data[j - 1] > key {
-                data[j] = data[j - 1];
-                j -= 1;
-            }
-            data[j] = key;
-        }
-        return;
-    }
+        FOR i ← 1 TO len - 1 DO
+            key ← data[i]
+            j ← i
+            WHILE j > 0 AND data[j - 1] > key DO
+                data[j] ← data[j - 1]
+                j ← j - 1
+            END WHILE
+            data[j] ← key
+        END FOR
+        RETURN
+    END IF
 
-    let mid = len / 2;
-    merge_sort_with_buffer(&mut data[..mid], buffer);
-    merge_sort_with_buffer(&mut data[mid..], buffer);
+    mid ← len / 2
+    MERGE_SORT_WITH_BUFFER(data[0..mid], buffer)
+    MERGE_SORT_WITH_BUFFER(data[mid..len], buffer)
 
-    buffer.clear();
-    buffer.extend_from_slice(&data[..mid]);
+    CLEAR(buffer)
+    COPY data[0..mid] INTO buffer
 
-    let mut i = 0;
-    let mut j = mid;
-    let mut k = 0;
+    i ← 0; j ← mid; k ← 0
+    WHILE i < LENGTH(buffer) AND j < len DO
+        IF buffer[i] ≤ data[j] THEN
+            data[k] ← buffer[i]; i ← i + 1
+        ELSE
+            data[k] ← data[j]; j ← j + 1
+        END IF
+        k ← k + 1
+    END WHILE
+    WHILE i < LENGTH(buffer) DO
+        data[k] ← buffer[i]; i ← i + 1; k ← k + 1
+    END WHILE
 
-    while i < buffer.len() && j < len {
-        if buffer[i] <= data[j] {
-            data[k] = buffer[i];
-            i += 1;
-        } else {
-            data[k] = data[j];
-            j += 1;
-        }
-        k += 1;
-    }
-    while i < buffer.len() {
-        data[k] = buffer[i];
-        i += 1;
-        k += 1;
-    }
-}
+PROCEDURE SORTING_BENCHMARKS()
+    FOR EACH size IN [100, 1000, 10000] DO
+        data ← REVERSED_RANGE(0, size)
 
-fn sorting_benchmarks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("sorting");
+        BENCHMARK "bubble_sort" WITH size:
+            d ← CLONE(data)
+            BUBBLE_SORT(d)
 
-    for size in [100, 1_000, 10_000].iter() {
-        let data: Vec<u32> = (0..*size).rev().collect();
-
-        group.bench_with_input(
-            BenchmarkId::new("bubble_sort", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    let mut d = data.clone();
-                    bubble_sort(black_box(&mut d));
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("merge_sort", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    let mut d = data.clone();
-                    let mut buf = Vec::with_capacity(*size as usize);
-                    merge_sort_with_buffer(black_box(&mut d), &mut buf);
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
-criterion_group!(benches, sorting_benchmarks);
-criterion_main!(benches);
+        BENCHMARK "merge_sort" WITH size:
+            d ← CLONE(data)
+            buffer ← NEW LIST(capacity ← size)
+            MERGE_SORT_WITH_BUFFER(d, buffer)
+    END FOR
 ```
 
 Key details about `criterion`:
@@ -140,312 +97,207 @@ Profiling identifies where a program actually spends its time or allocates its m
 
 **CPU Profiling** reveals hot functions and call paths. On Linux, `perf` is the standard tool. On macOS, Instruments serves the same role. In Rust, the `pprof` crate can generate CPU flame graphs programmatically:
 
-```rust
-// Cargo.toml:
-// [dependencies]
-// pprof = { version = "0.13", features = ["flamegraph"] }
+```text
+PROCEDURE CPU_INTENSIVE_WORK() → Integer
+    sum ← 0
+    FOR i ← 0 TO 9999999 DO
+        sum ← WRAPPING_ADD(sum, WRAPPING_MUL(i, i))
+    END FOR
+    RETURN sum
 
-use std::fs::File;
-use std::io::Write;
+PROCEDURE PROFILE_CPU_WORK()
+    guard ← START_PROFILER(
+        frequency ← 1000,       // Sample 1000 times per second.
+        blocklist ← ["libc", "libgcc", "pthread", "vdso"]
+    )
 
-fn cpu_intensive_work() -> u64 {
-    let mut sum: u64 = 0;
-    for i in 0..10_000_000u64 {
-        sum = sum.wrapping_add(i.wrapping_mul(i));
-    }
-    sum
-}
+    result ← CPU_INTENSIVE_WORK()
+    PRINT "Result: " + result
 
-fn profile_cpu_work() {
-    let guard = pprof::ProfilerGuardBuilder::default()
-        .frequency(1000)       // Sample 1000 times per second.
-        .blocklist(&["libc", "libgcc", "pthread", "vdso"])
-        .build()
-        .expect("Failed to build profiler guard");
-
-    let result = cpu_intensive_work();
-    println!("Result: {}", result);
-
-    if let Ok(report) = guard.report().build() {
-        let file = File::create("flamegraph.svg").expect("Failed to create file");
-        report.flamegraph(file).expect("Failed to write flamegraph");
-        println!("Flamegraph written to flamegraph.svg");
-    }
-}
+    report ← guard.BUILD_REPORT()
+    IF report IS OK THEN
+        file ← CREATE_FILE("flamegraph.svg")
+        WRITE_FLAMEGRAPH(report, file)
+        PRINT "Flamegraph written to flamegraph.svg"
+    END IF
 ```
 
 **Memory Profiling** tracks allocations and identifies leaks. The `dhat` crate is a Rust-native heap profiler:
 
-```rust
-// Cargo.toml:
-// [dependencies]
-// dhat = "0.3"
-//
-// [profile.release]
-// debug = true   # Required for useful backtraces in profiling builds.
+```text
+// Uses a heap profiler to track allocations.
 
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
-
-fn allocate_heavily() {
-    let mut vecs: Vec<Vec<u8>> = Vec::new();
-    for i in 0..1000 {
+PROCEDURE ALLOCATE_HEAVILY()
+    vecs ← EMPTY LIST
+    FOR i ← 0 TO 999 DO
         // Each iteration allocates a new vector of increasing size.
-        vecs.push(vec![0u8; i * 1024]);
-    }
+        APPEND NEW_ARRAY(size ← i * 1024, fill ← 0) TO vecs
+    END FOR
     // Only the last 100 are kept; the rest are dropped.
-    vecs.drain(..900);
-    println!("Retained {} vectors", vecs.len());
-}
+    REMOVE vecs[0..900]
+    PRINT "Retained " + LENGTH(vecs) + " vectors"
 
-fn main() {
-    let _profiler = dhat::Profiler::new_heap();
-    allocate_heavily();
-    // On drop, dhat writes a JSON report viewable at
-    // https://nnethercote.github.io/dh_view/dh_view.html
-}
+PROCEDURE MAIN()
+    profiler ← START_HEAP_PROFILER()
+    ALLOCATE_HEAVILY()
+    // On profiler cleanup, writes a JSON report for analysis
 ```
 
 **I/O Profiling** examines disk and network operations. Tools like `strace` (Linux) or `dtrace` (macOS) trace system calls. In application code, wrapping I/O in timing instrumentation is standard practice:
 
-```rust
-use std::io::{self, Read, Write};
-use std::time::Instant;
+```text
+STRUCTURE InstrumentedReader
+    inner : Reader
+    bytes_read : Integer ← 0
+    read_calls : Integer ← 0
+    total_duration : Duration ← 0
 
-struct InstrumentedReader<R: Read> {
-    inner: R,
-    bytes_read: u64,
-    read_calls: u64,
-    total_duration: std::time::Duration,
-}
+PROCEDURE InstrumentedReader.NEW(inner) → InstrumentedReader
+    RETURN InstrumentedReader { inner ← inner }
 
-impl<R: Read> InstrumentedReader<R> {
-    fn new(inner: R) -> Self {
-        Self {
-            inner,
-            bytes_read: 0,
-            read_calls: 0,
-            total_duration: std::time::Duration::ZERO,
-        }
-    }
+PROCEDURE InstrumentedReader.REPORT()
+    avg ← IF read_calls > 0 THEN bytes_read / read_calls ELSE 0
+    PRINT "I/O Report: " + bytes_read + " bytes across "
+          + read_calls + " calls in "
+          + (total_duration * 1000) + "ms (avg " + avg + " bytes/call)"
 
-    fn report(&self) {
-        println!(
-            "I/O Report: {} bytes across {} calls in {:.3}ms (avg {:.1} bytes/call)",
-            self.bytes_read,
-            self.read_calls,
-            self.total_duration.as_secs_f64() * 1000.0,
-            if self.read_calls > 0 {
-                self.bytes_read as f64 / self.read_calls as f64
-            } else {
-                0.0
-            }
-        );
-    }
-}
-
-impl<R: Read> Read for InstrumentedReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let start = Instant::now();
-        let result = self.inner.read(buf);
-        self.total_duration += start.elapsed();
-        if let Ok(n) = &result {
-            self.bytes_read += *n as u64;
-            self.read_calls += 1;
-        }
-        result
-    }
-}
+PROCEDURE InstrumentedReader.READ(buf) → Result<Integer>
+    start ← CURRENT_TIME()
+    result ← self.inner.READ(buf)
+    self.total_duration ← self.total_duration + ELAPSED(start)
+    IF result IS OK THEN
+        n ← result.VALUE
+        self.bytes_read ← self.bytes_read + n
+        self.read_calls ← self.read_calls + 1
+    END IF
+    RETURN result
 ```
 
 ### Optimization Techniques
 
 **Zero-Copy Parsing** avoids allocating new buffers by borrowing directly from the input data. This is critical in high-throughput systems that parse network packets, log lines, or serialization formats:
 
-```rust
-/// A zero-copy HTTP header parser. Fields borrow from the original byte slice
-/// rather than allocating owned Strings.
-#[derive(Debug)]
-struct HttpRequest<'a> {
-    method: &'a str,
-    path: &'a str,
-    headers: Vec<(&'a str, &'a str)>,
-}
+```text
+/// A zero-copy HTTP header parser. Fields reference the original data
+/// rather than allocating new strings.
+STRUCTURE HttpRequest
+    method : StringRef      // points into original buffer
+    path : StringRef        // points into original buffer
+    headers : List<(StringRef, StringRef)>
 
-fn parse_http_request(raw: &str) -> Option<HttpRequest<'_>> {
-    let mut lines = raw.split("\r\n");
+PROCEDURE PARSE_HTTP_REQUEST(raw) → Option<HttpRequest>
+    lines ← SPLIT(raw, "\r\n")
 
-    let request_line = lines.next()?;
-    let mut parts = request_line.splitn(3, ' ');
-    let method = parts.next()?;
-    let path = parts.next()?;
+    request_line ← FIRST(lines)
+    IF request_line IS NULL THEN RETURN NULL
+    parts ← SPLIT(request_line, " ", max ← 3)
+    method ← parts[0]
+    path ← parts[1]
     // We intentionally ignore the HTTP version for brevity.
 
-    let mut headers = Vec::new();
-    for line in lines {
-        if line.is_empty() {
-            break;
-        }
-        let (name, value) = line.split_once(": ")?;
-        headers.push((name, value));
-    }
+    headers ← EMPTY LIST
+    FOR EACH line IN REMAINING(lines) DO
+        IF line IS EMPTY THEN BREAK
+        (name, value) ← SPLIT_ONCE(line, ": ")
+        APPEND (name, value) TO headers
+    END FOR
 
-    Some(HttpRequest {
-        method,
-        path,
-        headers,
-    })
-}
+    RETURN HttpRequest { method, path, headers }
 
-fn demonstrate_zero_copy() {
-    let raw_request = "GET /api/users HTTP/1.1\r\n\
-                       Host: example.com\r\n\
-                       Accept: application/json\r\n\
-                       Authorization: Bearer abc123\r\n\
-                       \r\n";
+PROCEDURE DEMONSTRATE_ZERO_COPY()
+    raw_request ← "GET /api/users HTTP/1.1\r\nHost: example.com\r\n..."
 
-    let request = parse_http_request(raw_request).expect("Failed to parse");
+    request ← PARSE_HTTP_REQUEST(raw_request)
     // All string fields point into raw_request -- no heap allocations
     // were made for the parsed data.
-    println!("{} {} with {} headers", request.method, request.path, request.headers.len());
-}
+    PRINT request.method + " " + request.path + " with " + LENGTH(request.headers) + " headers"
 ```
 
 **Cache-Friendly Data Structures** organize data to minimize CPU cache misses. The classic example is "struct of arrays" (SoA) versus "array of structs" (AoS):
 
-```rust
+```text
 /// Array of Structs -- poor cache utilization when iterating over
 /// a single field, because each struct occupies a full cache line
 /// and fields are interleaved in memory.
-struct ParticleAoS {
-    x: f64,
-    y: f64,
-    z: f64,
-    mass: f64,
-    velocity_x: f64,
-    velocity_y: f64,
-    velocity_z: f64,
-    charge: f64, // 64 bytes total -- exactly one cache line.
-}
+STRUCTURE ParticleAoS
+    x, y, z : Float64
+    mass : Float64
+    velocity_x, velocity_y, velocity_z : Float64
+    charge : Float64    // 64 bytes total -- exactly one cache line.
 
 /// Struct of Arrays -- excellent cache utilization when processing
 /// one field at a time, because values are contiguous in memory.
-struct ParticlesSoA {
-    x: Vec<f64>,
-    y: Vec<f64>,
-    z: Vec<f64>,
-    mass: Vec<f64>,
-    velocity_x: Vec<f64>,
-    velocity_y: Vec<f64>,
-    velocity_z: Vec<f64>,
-    charge: Vec<f64>,
-}
+STRUCTURE ParticlesSoA
+    x, y, z : Array<Float64>
+    mass : Array<Float64>
+    velocity_x, velocity_y, velocity_z : Array<Float64>
+    charge : Array<Float64>
 
-impl ParticlesSoA {
-    fn new(capacity: usize) -> Self {
-        Self {
-            x: Vec::with_capacity(capacity),
-            y: Vec::with_capacity(capacity),
-            z: Vec::with_capacity(capacity),
-            mass: Vec::with_capacity(capacity),
-            velocity_x: Vec::with_capacity(capacity),
-            velocity_y: Vec::with_capacity(capacity),
-            velocity_z: Vec::with_capacity(capacity),
-            charge: Vec::with_capacity(capacity),
-        }
-    }
+PROCEDURE ParticlesSoA.NEW(capacity) → ParticlesSoA
+    RETURN ParticlesSoA WITH each array pre-allocated to capacity
 
-    /// Update all positions using velocity. This iterates over x, y, z
-    /// and velocity arrays contiguously, maximizing cache line utilization.
-    fn update_positions(&mut self, dt: f64) {
-        for i in 0..self.x.len() {
-            self.x[i] += self.velocity_x[i] * dt;
-            self.y[i] += self.velocity_y[i] * dt;
-            self.z[i] += self.velocity_z[i] * dt;
-        }
-    }
+/// Update all positions using velocity. This iterates over x, y, z
+/// and velocity arrays contiguously, maximizing cache line utilization.
+PROCEDURE ParticlesSoA.UPDATE_POSITIONS(dt)
+    FOR i ← 0 TO LENGTH(self.x) - 1 DO
+        self.x[i] ← self.x[i] + self.velocity_x[i] * dt
+        self.y[i] ← self.y[i] + self.velocity_y[i] * dt
+        self.z[i] ← self.z[i] + self.velocity_z[i] * dt
+    END FOR
 
-    /// Compute total kinetic energy. Only touches mass and velocity arrays,
-    /// so the x/y/z/charge data never pollutes the cache.
-    fn total_kinetic_energy(&self) -> f64 {
-        let mut total = 0.0;
-        for i in 0..self.mass.len() {
-            let v_sq = self.velocity_x[i].powi(2)
-                + self.velocity_y[i].powi(2)
-                + self.velocity_z[i].powi(2);
-            total += 0.5 * self.mass[i] * v_sq;
-        }
-        total
-    }
-}
+/// Compute total kinetic energy. Only touches mass and velocity arrays,
+/// so the x/y/z/charge data never pollutes the cache.
+PROCEDURE ParticlesSoA.TOTAL_KINETIC_ENERGY() → Float64
+    total ← 0.0
+    FOR i ← 0 TO LENGTH(self.mass) - 1 DO
+        v_sq ← self.velocity_x[i]^2 + self.velocity_y[i]^2 + self.velocity_z[i]^2
+        total ← total + 0.5 * self.mass[i] * v_sq
+    END FOR
+    RETURN total
 ```
 
 **SIMD (Single Instruction, Multiple Data)** processes multiple data elements in a single CPU instruction. Rust provides access through `std::simd` (nightly) or the `packed_simd` / `wide` crates:
 
-```rust
+```text
 /// Sum an array of f32 values using manual loop unrolling to hint at
 /// auto-vectorization. The compiler can often convert this to SIMD
 /// instructions with appropriate target features enabled.
-///
-/// Compile with: RUSTFLAGS="-C target-cpu=native" cargo build --release
-fn sum_f32_vectorizable(data: &[f32]) -> f32 {
+PROCEDURE SUM_F32_VECTORIZABLE(data) → Float32
     // Use four accumulators to break data dependencies and allow
     // the CPU to pipeline additions across SIMD lanes.
-    let mut sum0: f32 = 0.0;
-    let mut sum1: f32 = 0.0;
-    let mut sum2: f32 = 0.0;
-    let mut sum3: f32 = 0.0;
+    sum0 ← 0.0; sum1 ← 0.0; sum2 ← 0.0; sum3 ← 0.0
 
-    let chunks = data.chunks_exact(4);
-    let remainder = chunks.remainder();
+    FOR EACH chunk OF 4 IN data DO
+        sum0 ← sum0 + chunk[0]
+        sum1 ← sum1 + chunk[1]
+        sum2 ← sum2 + chunk[2]
+        sum3 ← sum3 + chunk[3]
+    END FOR
 
-    for chunk in chunks {
-        sum0 += chunk[0];
-        sum1 += chunk[1];
-        sum2 += chunk[2];
-        sum3 += chunk[3];
-    }
+    FOR EACH val IN REMAINDER(data, 4) DO
+        sum0 ← sum0 + val
+    END FOR
 
-    for val in remainder {
-        sum0 += val;
-    }
-
-    sum0 + sum1 + sum2 + sum3
-}
+    RETURN sum0 + sum1 + sum2 + sum3
 
 /// Using explicit SIMD intrinsics for x86_64 platforms.
-#[cfg(target_arch = "x86_64")]
-fn sum_f32_explicit_simd(data: &[f32]) -> f32 {
-    #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::*;
+/// Processes 8 floats at a time using 256-bit AVX registers.
+PROCEDURE SUM_F32_EXPLICIT_SIMD(data) → Float32
+    acc ← SIMD_ZERO_256()         // 8 x f32 accumulator
 
-    unsafe {
-        let mut acc = _mm256_setzero_ps(); // 8 x f32 accumulator
-        let chunks = data.chunks_exact(8);
-        let remainder = chunks.remainder();
+    FOR EACH chunk OF 8 IN data DO
+        vals ← SIMD_LOAD_256(chunk)
+        acc ← SIMD_ADD_256(acc, vals)
+    END FOR
 
-        for chunk in chunks {
-            let vals = _mm256_loadu_ps(chunk.as_ptr());
-            acc = _mm256_add_ps(acc, vals);
-        }
+    // Horizontal sum of the 8 lanes.
+    total ← SIMD_HORIZONTAL_SUM(acc)
 
-        // Horizontal sum of the 8 lanes.
-        let hi = _mm256_extractf128_ps(acc, 1);
-        let lo = _mm256_castps256_ps128(acc);
-        let sum128 = _mm_add_ps(hi, lo);
-        let shuf = _mm_movehdup_ps(sum128);
-        let sums = _mm_add_ps(sum128, shuf);
-        let shuf2 = _mm_movehl_ps(sums, sums);
-        let result = _mm_add_ss(sums, shuf2);
-        let mut total = _mm_cvtss_f32(result);
+    FOR EACH val IN REMAINDER(data, 8) DO
+        total ← total + val
+    END FOR
 
-        for val in remainder {
-            total += val;
-        }
-
-        total
-    }
-}
+    RETURN total
 ```
 
 ### Load Testing with k6 and Locust
@@ -454,156 +306,81 @@ Load testing verifies that a system meets performance targets under realistic tr
 
 A Rust HTTP service designed for load testing should expose metrics endpoints and handle backpressure gracefully:
 
-```rust
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
+```text
+/// Tracks request metrics for monitoring during load tests (thread-safe).
+STRUCTURE LoadTestMetrics
+    request_count : AtomicInteger ← 0
+    error_count : AtomicInteger ← 0
+    total_latency_micros : AtomicInteger ← 0
+    max_latency_micros : AtomicInteger ← 0
+    start_time : Timestamp
 
-/// Tracks request metrics for monitoring during load tests.
-struct LoadTestMetrics {
-    request_count: AtomicU64,
-    error_count: AtomicU64,
-    total_latency_micros: AtomicU64,
-    max_latency_micros: AtomicU64,
-    start_time: Instant,
-}
+PROCEDURE LoadTestMetrics.RECORD_REQUEST(latency_micros, is_error)
+    ATOMIC_INCREMENT(self.request_count, 1)
+    ATOMIC_ADD(self.total_latency_micros, latency_micros)
 
-impl LoadTestMetrics {
-    fn new() -> Self {
-        Self {
-            request_count: AtomicU64::new(0),
-            error_count: AtomicU64::new(0),
-            total_latency_micros: AtomicU64::new(0),
-            max_latency_micros: AtomicU64::new(0),
-            start_time: Instant::now(),
-        }
+    IF is_error THEN
+        ATOMIC_INCREMENT(self.error_count, 1)
+    END IF
+
+    // Update max latency using compare-and-swap loop.
+    current_max ← ATOMIC_LOAD(self.max_latency_micros)
+    WHILE latency_micros > current_max DO
+        IF COMPARE_AND_SWAP(self.max_latency_micros, current_max, latency_micros) THEN
+            BREAK
+        END IF
+        current_max ← ATOMIC_LOAD(self.max_latency_micros)
+    END WHILE
+
+PROCEDURE LoadTestMetrics.SNAPSHOT() → MetricsSnapshot
+    count ← ATOMIC_LOAD(self.request_count)
+    errors ← ATOMIC_LOAD(self.error_count)
+    total_latency ← ATOMIC_LOAD(self.total_latency_micros)
+    max_latency ← ATOMIC_LOAD(self.max_latency_micros)
+    elapsed ← ELAPSED_SECONDS(self.start_time)
+
+    RETURN MetricsSnapshot {
+        total_requests ← count,
+        error_rate ← IF count > 0 THEN errors / count ELSE 0.0,
+        avg_latency_ms ← IF count > 0 THEN (total_latency / count) / 1000.0 ELSE 0.0,
+        max_latency_ms ← max_latency / 1000.0,
+        requests_per_second ← IF elapsed > 0 THEN count / elapsed ELSE 0.0
     }
 
-    fn record_request(&self, latency_micros: u64, is_error: bool) {
-        self.request_count.fetch_add(1, Ordering::Relaxed);
-        self.total_latency_micros
-            .fetch_add(latency_micros, Ordering::Relaxed);
-
-        if is_error {
-            self.error_count.fetch_add(1, Ordering::Relaxed);
-        }
-
-        // Update max latency using compare-and-swap loop.
-        let mut current_max = self.max_latency_micros.load(Ordering::Relaxed);
-        while latency_micros > current_max {
-            match self.max_latency_micros.compare_exchange_weak(
-                current_max,
-                latency_micros,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(actual) => current_max = actual,
-            }
-        }
-    }
-
-    fn snapshot(&self) -> MetricsSnapshot {
-        let count = self.request_count.load(Ordering::Relaxed);
-        let errors = self.error_count.load(Ordering::Relaxed);
-        let total_latency = self.total_latency_micros.load(Ordering::Relaxed);
-        let max_latency = self.max_latency_micros.load(Ordering::Relaxed);
-        let elapsed = self.start_time.elapsed();
-
-        MetricsSnapshot {
-            total_requests: count,
-            error_rate: if count > 0 {
-                errors as f64 / count as f64
-            } else {
-                0.0
-            },
-            avg_latency_ms: if count > 0 {
-                (total_latency as f64 / count as f64) / 1000.0
-            } else {
-                0.0
-            },
-            max_latency_ms: max_latency as f64 / 1000.0,
-            requests_per_second: if elapsed.as_secs_f64() > 0.0 {
-                count as f64 / elapsed.as_secs_f64()
-            } else {
-                0.0
-            },
-        }
-    }
-}
-
-struct MetricsSnapshot {
-    total_requests: u64,
-    error_rate: f64,
-    avg_latency_ms: f64,
-    max_latency_ms: f64,
-    requests_per_second: f64,
-}
+STRUCTURE MetricsSnapshot
+    total_requests : Integer
+    error_rate : Float
+    avg_latency_ms : Float
+    max_latency_ms : Float
+    requests_per_second : Float
 ```
 
 ### Database Query Optimization
 
 Database performance is often the single largest bottleneck in web applications. Key optimization strategies include proper indexing, query plan analysis, connection pooling, and avoiding the N+1 query problem.
 
-```rust
-// Using sqlx for async database access with compile-time query checking.
-//
-// Cargo.toml:
-// [dependencies]
-// sqlx = { version = "0.7", features = ["runtime-tokio", "postgres"] }
-// tokio = { version = "1", features = ["full"] }
-
-use std::time::Instant;
-
+```text
 /// Demonstrates the N+1 problem and its solution.
 ///
 /// BAD: Fetching orders, then fetching items for each order separately.
 /// This issues 1 + N queries where N is the number of orders.
 ///
-/// ```sql
-/// SELECT * FROM orders WHERE user_id = $1;
-/// -- Then for EACH order:
-/// SELECT * FROM order_items WHERE order_id = $1;
-/// ```
-///
 /// GOOD: A single JOIN query that fetches everything at once.
-///
-/// ```sql
-/// SELECT o.id AS order_id, o.total, o.created_at,
-///        i.product_name, i.quantity, i.unit_price
-/// FROM orders o
-/// LEFT JOIN order_items i ON i.order_id = o.id
-/// WHERE o.user_id = $1
-/// ORDER BY o.created_at DESC;
-/// ```
 
 /// Connection pool configuration tuned for performance.
 /// These values should be adjusted based on load testing results.
-struct PoolConfig {
-    min_connections: u32,
-    max_connections: u32,
-    acquire_timeout_secs: u64,
-    idle_timeout_secs: u64,
-    max_lifetime_secs: u64,
-}
-
-impl Default for PoolConfig {
-    fn default() -> Self {
-        Self {
-            // Keep some connections warm to avoid cold-start latency.
-            min_connections: 5,
-            // Limit max connections to avoid overwhelming the database.
-            // A common formula: max_connections = (core_count * 2) + disk_spindles
-            max_connections: 20,
-            // Fail fast if no connection is available.
-            acquire_timeout_secs: 3,
-            // Recycle idle connections to free database resources.
-            idle_timeout_secs: 600,
-            // Rotate connections to prevent stale state accumulation.
-            max_lifetime_secs: 1800,
-        }
-    }
-}
+STRUCTURE PoolConfig
+    // Keep some connections warm to avoid cold-start latency.
+    min_connections ← 5
+    // Limit max connections to avoid overwhelming the database.
+    // A common formula: max_connections = (core_count * 2) + disk_spindles
+    max_connections ← 20
+    // Fail fast if no connection is available.
+    acquire_timeout_secs ← 3
+    // Recycle idle connections to free database resources.
+    idle_timeout_secs ← 600
+    // Rotate connections to prevent stale state accumulation.
+    max_lifetime_secs ← 1800
 
 /// Pagination using keyset (cursor-based) pagination instead of OFFSET.
 /// OFFSET-based pagination degrades as the offset grows because the database
@@ -611,36 +388,21 @@ impl Default for PoolConfig {
 ///
 /// BAD:  SELECT * FROM events ORDER BY created_at DESC LIMIT 20 OFFSET 10000;
 /// GOOD: SELECT * FROM events WHERE created_at < $1 ORDER BY created_at DESC LIMIT 20;
-struct KeysetPaginator {
-    last_seen_cursor: Option<String>,
-    page_size: i64,
-}
+STRUCTURE KeysetPaginator
+    last_seen_cursor : Optional<String>
+    page_size : Integer
 
-impl KeysetPaginator {
-    fn new(page_size: i64) -> Self {
-        Self {
-            last_seen_cursor: None,
-            page_size,
-        }
-    }
+PROCEDURE KeysetPaginator.WHERE_CLAUSE() → String
+    IF self.last_seen_cursor IS NOT NULL THEN
+        RETURN "WHERE created_at < '" + self.last_seen_cursor + "'"
+    ELSE
+        RETURN ""
+    END IF
 
-    /// Returns the SQL WHERE clause fragment for keyset pagination.
-    fn where_clause(&self) -> String {
-        match &self.last_seen_cursor {
-            Some(cursor) => format!("WHERE created_at < '{}'", cursor),
-            None => String::new(),
-        }
-    }
-
-    fn query(&self, table: &str) -> String {
-        format!(
-            "SELECT * FROM {} {} ORDER BY created_at DESC LIMIT {}",
-            table,
-            self.where_clause(),
-            self.page_size
-        )
-    }
-}
+PROCEDURE KeysetPaginator.QUERY(table) → String
+    RETURN "SELECT * FROM " + table + " "
+           + self.WHERE_CLAUSE()
+           + " ORDER BY created_at DESC LIMIT " + self.page_size
 ```
 
 ### Frontend Performance: Core Web Vitals and Bundle Optimization
@@ -653,87 +415,40 @@ While the frontend itself may not be written in Rust, the backend APIs and asset
 
 A Rust backend can improve frontend performance through efficient asset compression and cache header management:
 
-```rust
-use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
-
+```text
 /// Manages HTTP cache headers for static assets to improve LCP.
-struct CachePolicy {
-    /// Maps file extensions to cache durations.
-    policies: HashMap<String, CachePolicyEntry>,
-}
+STRUCTURE CachePolicy
+    policies : Map<String, CachePolicyEntry>
 
-struct CachePolicyEntry {
-    max_age: Duration,
-    immutable: bool,
-    public: bool,
-}
+STRUCTURE CachePolicyEntry
+    max_age : Duration
+    immutable : Boolean
+    public : Boolean
 
-impl CachePolicy {
-    fn new() -> Self {
-        let mut policies = HashMap::new();
+PROCEDURE CachePolicy.NEW() → CachePolicy
+    policies ← EMPTY MAP
 
-        // Hashed assets (e.g., app.a1b2c3.js) can be cached forever.
-        policies.insert(
-            "js".to_string(),
-            CachePolicyEntry {
-                max_age: Duration::from_secs(365 * 24 * 3600),
-                immutable: true,
-                public: true,
-            },
-        );
+    // Hashed assets (e.g., app.a1b2c3.js) can be cached forever.
+    SET policies["js"]   ← { max_age ← 1 year, immutable ← TRUE, public ← TRUE }
+    SET policies["css"]  ← { max_age ← 1 year, immutable ← TRUE, public ← TRUE }
+    // HTML should be revalidated on every request.
+    SET policies["html"] ← { max_age ← 0, immutable ← FALSE, public ← TRUE }
+    // Images with content hashes.
+    SET policies["webp"] ← { max_age ← 30 days, immutable ← TRUE, public ← TRUE }
 
-        policies.insert(
-            "css".to_string(),
-            CachePolicyEntry {
-                max_age: Duration::from_secs(365 * 24 * 3600),
-                immutable: true,
-                public: true,
-            },
-        );
+    RETURN CachePolicy { policies }
 
-        // HTML should be revalidated on every request.
-        policies.insert(
-            "html".to_string(),
-            CachePolicyEntry {
-                max_age: Duration::from_secs(0),
-                immutable: false,
-                public: true,
-            },
-        );
-
-        // Images with content hashes.
-        policies.insert(
-            "webp".to_string(),
-            CachePolicyEntry {
-                max_age: Duration::from_secs(30 * 24 * 3600),
-                immutable: true,
-                public: true,
-            },
-        );
-
-        Self { policies }
-    }
-
-    fn cache_control_header(&self, extension: &str) -> String {
-        match self.policies.get(extension) {
-            Some(entry) => {
-                let mut parts = Vec::new();
-                if entry.public {
-                    parts.push("public".to_string());
-                } else {
-                    parts.push("private".to_string());
-                }
-                parts.push(format!("max-age={}", entry.max_age.as_secs()));
-                if entry.immutable {
-                    parts.push("immutable".to_string());
-                }
-                parts.join(", ")
-            }
-            None => "public, max-age=3600".to_string(),
-        }
-    }
-}
+PROCEDURE CachePolicy.CACHE_CONTROL_HEADER(extension) → String
+    entry ← self.policies[extension]
+    IF entry IS NOT NULL THEN
+        parts ← EMPTY LIST
+        APPEND (IF entry.public THEN "public" ELSE "private") TO parts
+        APPEND "max-age=" + entry.max_age_seconds TO parts
+        IF entry.immutable THEN APPEND "immutable" TO parts
+        RETURN JOIN(parts, ", ")
+    ELSE
+        RETURN "public, max-age=3600"
+    END IF
 ```
 
 ### SLA, SLO, and SLI
@@ -744,88 +459,44 @@ These three concepts form a hierarchy that connects business promises to enginee
 - **SLO (Service Level Objective)**: A target for an SLI -- for example, "99.9% of requests will complete in under 200ms, measured over a 30-day rolling window."
 - **SLA (Service Level Agreement)**: A contractual commitment that includes consequences -- for example, "If the 99.9% latency SLO is breached, the customer receives a 10% service credit."
 
-```rust
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
-
+```text
 /// Tracks an SLI and evaluates it against an SLO.
-struct SloTracker {
-    /// Name of the SLI being tracked.
-    name: String,
-    /// The SLO target as a fraction (e.g., 0.999 for 99.9%).
-    target: f64,
-    /// Rolling window duration.
-    window: Duration,
-    /// Timestamped outcomes: true = good, false = bad.
-    events: VecDeque<(Instant, bool)>,
-}
+STRUCTURE SloTracker
+    name : String               // Name of the SLI being tracked
+    target : Float              // SLO target as fraction (e.g., 0.999 for 99.9%)
+    window : Duration           // Rolling window duration
+    events : Deque<(Timestamp, Boolean)>  // Timestamped outcomes
 
-impl SloTracker {
-    fn new(name: &str, target: f64, window: Duration) -> Self {
-        Self {
-            name: name.to_string(),
-            target,
-            window,
-            events: VecDeque::new(),
-        }
-    }
+PROCEDURE SloTracker.RECORD(success)
+    now ← CURRENT_TIME()
+    PUSH_BACK (now, success) TO self.events
+    self.EVICT_OLD_EVENTS(now)
 
-    fn record(&mut self, success: bool) {
-        let now = Instant::now();
-        self.events.push_back((now, success));
-        self.evict_old_events(now);
-    }
+PROCEDURE SloTracker.EVICT_OLD_EVENTS(now)
+    WHILE self.events IS NOT EMPTY DO
+        (timestamp, _) ← FRONT(self.events)
+        IF now - timestamp > self.window THEN
+            POP_FRONT(self.events)
+        ELSE
+            BREAK
+        END IF
+    END WHILE
 
-    fn evict_old_events(&mut self, now: Instant) {
-        while let Some((timestamp, _)) = self.events.front() {
-            if now.duration_since(*timestamp) > self.window {
-                self.events.pop_front();
-            } else {
-                break;
-            }
-        }
-    }
+PROCEDURE SloTracker.CURRENT_LEVEL() → Float
+    self.EVICT_OLD_EVENTS(CURRENT_TIME())
+    IF self.events IS EMPTY THEN RETURN 1.0
+    good ← COUNT events WHERE success = TRUE
+    RETURN good / LENGTH(self.events)
 
-    fn current_level(&mut self) -> f64 {
-        self.evict_old_events(Instant::now());
-        if self.events.is_empty() {
-            return 1.0;
-        }
-        let good = self.events.iter().filter(|(_, ok)| *ok).count();
-        good as f64 / self.events.len() as f64
-    }
+PROCEDURE SloTracker.ERROR_BUDGET_REMAINING() → Float
+    current ← self.CURRENT_LEVEL()
+    allowed_bad_rate ← 1.0 - self.target
+    actual_bad_rate ← 1.0 - current
+    IF allowed_bad_rate = 0.0 THEN RETURN 0.0
+    RETURN 1.0 - (actual_bad_rate / allowed_bad_rate)
 
-    fn error_budget_remaining(&mut self) -> f64 {
-        let current = self.current_level();
-        let allowed_bad_rate = 1.0 - self.target;
-        let actual_bad_rate = 1.0 - current;
-        if allowed_bad_rate == 0.0 {
-            return 0.0;
-        }
-        1.0 - (actual_bad_rate / allowed_bad_rate)
-    }
-
-    fn is_meeting_slo(&mut self) -> bool {
-        self.current_level() >= self.target
-    }
-
-    fn report(&mut self) -> String {
-        let level = self.current_level();
-        let budget = self.error_budget_remaining();
-        format!(
-            "SLO '{}': current={:.4}%, target={:.4}%, budget_remaining={:.2}%, status={}",
-            self.name,
-            level * 100.0,
-            self.target * 100.0,
-            budget * 100.0,
-            if self.is_meeting_slo() {
-                "HEALTHY"
-            } else {
-                "BREACHED"
-            }
-        )
-    }
-}
+PROCEDURE SloTracker.IS_MEETING_SLO() → Boolean
+    RETURN self.CURRENT_LEVEL() ≥ self.target
 ```
 
 ---

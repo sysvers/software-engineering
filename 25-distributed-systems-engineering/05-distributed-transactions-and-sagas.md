@@ -98,110 +98,79 @@ SagaOrchestrator
 
 ### Saga Orchestrator
 
-```rust
-use std::fmt;
-
+```text
 /// Represents a single step in a saga with its action and compensation.
-struct SagaStep {
-    name: String,
-    /// Returns Ok(()) on success, Err(reason) on failure.
-    execute: Box<dyn Fn() -> Result<(), String>>,
-    /// Compensating action to undo this step.
-    compensate: Box<dyn Fn() -> Result<(), String>>,
-}
-
-impl fmt::Debug for SagaStep {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SagaStep({})", self.name)
-    }
-}
+STRUCTURE SagaStep
+    name : String
+    execute : Function → Result        // Returns Ok on success, Error(reason) on failure
+    compensate : Function → Result     // Compensating action to undo this step
 
 /// An orchestration-based saga executor.
-struct SagaOrchestrator {
-    steps: Vec<SagaStep>,
-}
+STRUCTURE SagaOrchestrator
+    steps : List<SagaStep>
 
-impl SagaOrchestrator {
-    fn new() -> Self {
-        Self { steps: Vec::new() }
-    }
+/// Execute the saga. On failure, compensate all completed steps in reverse.
+PROCEDURE SagaOrchestrator.EXECUTE() → Result
+    completed ← EMPTY LIST
 
-    fn add_step(&mut self, step: SagaStep) {
-        self.steps.push(step);
-    }
+    FOR i ← 0 TO LENGTH(self.steps) - 1 DO
+        step ← self.steps[i]
+        PRINT "Executing step: " + step.name
+        result ← step.EXECUTE()
+        IF result IS OK THEN
+            APPEND i TO completed
+        ELSE
+            reason ← result.ERROR
+            PRINT "Step '" + step.name + "' failed: " + reason + ". Initiating compensation."
+            FOR EACH idx IN REVERSE(completed) DO
+                comp_step ← self.steps[idx]
+                PRINT "Compensating step: " + comp_step.name
+                comp_result ← comp_step.COMPENSATE()
+                IF comp_result IS ERROR THEN
+                    PRINT "Compensation for '" + comp_step.name + "' failed: "
+                          + comp_result.ERROR + ". Manual intervention required."
+                END IF
+            END FOR
+            RETURN Error("Saga failed at step '" + step.name + "': " + reason)
+        END IF
+    END FOR
 
-    /// Execute the saga. On failure, compensate all completed steps in reverse.
-    fn execute(&self) -> Result<(), String> {
-        let mut completed: Vec<usize> = Vec::new();
-
-        for (i, step) in self.steps.iter().enumerate() {
-            println!("Executing step: {}", step.name);
-            match (step.execute)() {
-                Ok(()) => {
-                    completed.push(i);
-                }
-                Err(reason) => {
-                    eprintln!(
-                        "Step '{}' failed: {}. Initiating compensation.",
-                        step.name, reason
-                    );
-                    for &idx in completed.iter().rev() {
-                        let comp_step = &self.steps[idx];
-                        println!("Compensating step: {}", comp_step.name);
-                        if let Err(comp_err) = (comp_step.compensate)() {
-                            eprintln!(
-                                "Compensation for '{}' failed: {}. Manual intervention required.",
-                                comp_step.name, comp_err
-                            );
-                        }
-                    }
-                    return Err(format!("Saga failed at step '{}': {}", step.name, reason));
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
+    RETURN Ok
 ```
 
 ### Saga with Persistent State
 
 In production, the orchestrator must persist its state so it can recover after a crash:
 
-```rust
+```text
 /// Tracks the persistent state of a saga execution.
-#[derive(Debug, Clone)]
-enum SagaState {
+ENUMERATION SagaState
     /// Saga is executing forward steps.
-    Running { completed_steps: Vec<String> },
+    Running { completed_steps : List<String> }
     /// A step failed; compensations are in progress.
     Compensating {
-        failed_step: String,
-        compensated_steps: Vec<String>,
-        remaining_compensations: Vec<String>,
-    },
+        failed_step : String,
+        compensated_steps : List<String>,
+        remaining_compensations : List<String>
+    }
     /// All steps completed successfully.
-    Completed,
+    Completed
     /// All compensations completed (or saga was fully rolled back).
-    Aborted { reason: String },
+    Aborted { reason : String }
     /// A compensation failed -- manual intervention required.
     CompensationFailed {
-        failed_step: String,
-        failed_compensation: String,
-        error: String,
-    },
-}
+        failed_step : String,
+        failed_compensation : String,
+        error : String
+    }
 
 /// A saga execution record that would be persisted to a database.
-#[derive(Debug)]
-struct SagaExecution {
-    saga_id: String,
-    saga_type: String,
-    state: SagaState,
-    created_at: std::time::Instant,
-    updated_at: std::time::Instant,
-}
+STRUCTURE SagaExecution
+    saga_id : String
+    saga_type : String
+    state : SagaState
+    created_at : Timestamp
+    updated_at : Timestamp
 ```
 
 ---

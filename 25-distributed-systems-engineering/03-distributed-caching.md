@@ -43,64 +43,42 @@ Application instances maintain a small local L1 cache backed by a shared remote 
 
 The application checks the cache first. On a miss, it reads from the database, populates the cache, and returns the result.
 
-```rust
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+```text
+STRUCTURE CacheEntry<V>
+    value : V
+    inserted_at : Timestamp
+    ttl : Duration
 
-struct CacheEntry<V> {
-    value: V,
-    inserted_at: Instant,
-    ttl: Duration,
-}
-
-impl<V> CacheEntry<V> {
-    fn is_expired(&self) -> bool {
-        self.inserted_at.elapsed() > self.ttl
-    }
-}
+PROCEDURE CacheEntry.IS_EXPIRED() → Boolean
+    RETURN ELAPSED(self.inserted_at) > self.ttl
 
 /// A cache-aside implementation with TTL-based expiration.
-struct CacheAside<V: Clone> {
-    store: HashMap<String, CacheEntry<V>>,
-    default_ttl: Duration,
-}
+STRUCTURE CacheAside<V>
+    store : Map<String, CacheEntry<V>>
+    default_ttl : Duration
 
-impl<V: Clone> CacheAside<V> {
-    fn new(default_ttl: Duration) -> Self {
-        Self {
-            store: HashMap::new(),
-            default_ttl,
-        }
+/// Attempt to read from cache. Returns NULL on miss or expiration.
+PROCEDURE CacheAside.GET(key) → Optional<V>
+    entry ← self.store[key]
+    IF entry IS NOT NULL THEN
+        IF NOT entry.IS_EXPIRED() THEN
+            RETURN entry.value
+        END IF
+        DELETE self.store[key]
+    END IF
+    RETURN NULL
+
+/// Populate the cache after a database read.
+PROCEDURE CacheAside.SET(key, value)
+    self.store[key] ← CacheEntry {
+        value ← value,
+        inserted_at ← CURRENT_TIME(),
+        ttl ← self.default_ttl
     }
 
-    /// Attempt to read from cache. Returns None on miss or expiration.
-    fn get(&mut self, key: &str) -> Option<V> {
-        if let Some(entry) = self.store.get(key) {
-            if !entry.is_expired() {
-                return Some(entry.value.clone());
-            }
-            self.store.remove(key);
-        }
-        None
-    }
-
-    /// Populate the cache after a database read.
-    fn set(&mut self, key: String, value: V) {
-        self.store.insert(
-            key,
-            CacheEntry {
-                value,
-                inserted_at: Instant::now(),
-                ttl: self.default_ttl,
-            },
-        );
-    }
-
-    /// Invalidate a cache entry, typically after a write to the database.
-    fn invalidate(&mut self, key: &str) {
-        self.store.remove(key);
-    }
-}
+/// Invalidate a cache entry, typically after a write to the database.
+PROCEDURE CacheAside.INVALIDATE(key)
+    DELETE self.store[key]
 ```
 
 - Most common pattern in practice

@@ -69,20 +69,15 @@ fuzz/
 
 A fuzz target is a function that takes arbitrary bytes and feeds them to the code under test:
 
-```rust
-// fuzz/fuzz_targets/parse_config.rs
-#![no_main]
-use libfuzzer_sys::fuzz_target;
-use my_crate::config::parse_config;
-
-fuzz_target!(|data: &[u8]| {
+```text
+// fuzz/fuzz_targets/parse_config
+FUZZ TARGET (data: bytes)
     // Convert raw bytes to a string (skip invalid UTF-8)
-    if let Ok(input) = std::str::from_utf8(data) {
+    IF data IS valid UTF-8
+        input <- data AS string
         // The fuzzer will try millions of inputs
-        // If parse_config panics on ANY input, the fuzzer reports it
-        let _ = parse_config(input);
-    }
-});
+        // If PARSE_CONFIG panics on ANY input, the fuzzer reports it
+        CALL PARSE_CONFIG(input)
 ```
 
 ### Running the Fuzzer
@@ -102,28 +97,17 @@ cargo +nightly fuzz run parse_config corpus/parse_config/
 
 For more targeted fuzzing, use the `arbitrary` crate to generate structured inputs instead of raw bytes:
 
-```rust
-#![no_main]
-use libfuzzer_sys::fuzz_target;
-use arbitrary::Arbitrary;
+```text
+STRUCTURE FuzzInput (auto-generated from random data)
+    name: string
+    age: unsigned integer
+    tags: list of string
+    nested: optional FuzzInput
 
-#[derive(Arbitrary, Debug)]
-struct FuzzInput {
-    name: String,
-    age: u32,
-    tags: Vec<String>,
-    nested: Option<Box<FuzzInput>>,
-}
-
-fuzz_target!(|input: FuzzInput| {
+FUZZ TARGET (input: FuzzInput)
     // The fuzzer generates valid FuzzInput structs
     // with random but well-typed data
-    let _ = my_crate::process_user_input(
-        &input.name,
-        input.age,
-        &input.tags,
-    );
-});
+    CALL PROCESS_USER_INPUT(input.name, input.age, input.tags)
 ```
 
 This produces more meaningful inputs than raw bytes, reaching deeper into your application logic.
@@ -134,48 +118,34 @@ This produces more meaningful inputs than raw bytes, reaching deeper into your a
 
 ### Fuzzing a JSON Parser
 
-```rust
-#![no_main]
-use libfuzzer_sys::fuzz_target;
-
-fuzz_target!(|data: &[u8]| {
-    if let Ok(input) = std::str::from_utf8(data) {
+```text
+FUZZ TARGET (data: bytes)
+    IF data IS valid UTF-8
+        input <- data AS string
         // Should never panic, regardless of input
-        let _ = serde_json::from_str::<serde_json::Value>(input);
-    }
-});
+        CALL JSON_PARSE(input)
 ```
 
 This tests that your JSON parser handles every possible input without panicking. Real JSON parsers have been found to panic on deeply nested structures, specific Unicode sequences, and extremely long number literals.
 
 ### Fuzzing a Network Protocol Parser
 
-```rust
-#![no_main]
-use libfuzzer_sys::fuzz_target;
-use my_crate::protocol::parse_message;
-
-fuzz_target!(|data: &[u8]| {
+```text
+FUZZ TARGET (data: bytes)
     // Network protocols receive untrusted bytes from the network
     // They must handle ANY input safely
-    let _ = parse_message(data);
-});
+    CALL PARSE_MESSAGE(data)
 ```
 
 ### Fuzzing with Round-Trip Invariants
 
 A powerful pattern: verify that encoding then decoding produces the original value.
 
-```rust
-#![no_main]
-use libfuzzer_sys::fuzz_target;
-use my_crate::codec::{encode, decode};
-
-fuzz_target!(|original: Vec<u8>| {
-    let encoded = encode(&original);
-    let decoded = decode(&encoded).expect("decode should succeed for valid encoded data");
-    assert_eq!(original, decoded, "round-trip must preserve data");
-});
+```text
+FUZZ TARGET (original: list of bytes)
+    encoded <- ENCODE(original)
+    decoded <- DECODE(encoded)  // must succeed for valid encoded data
+    ASSERT original = decoded, "round-trip must preserve data"
 ```
 
 If this assertion fails on any input, you have found a real bug in your codec.
@@ -184,17 +154,13 @@ If this assertion fails on any input, you have found a real bug in your codec.
 
 Compare two implementations of the same function to find discrepancies:
 
-```rust
-#![no_main]
-use libfuzzer_sys::fuzz_target;
-
-fuzz_target!(|data: &[u8]| {
-    if let Ok(input) = std::str::from_utf8(data) {
-        let result_v1 = my_crate::parser_v1::parse(input);
-        let result_v2 = my_crate::parser_v2::parse(input);
-        assert_eq!(result_v1, result_v2, "v1 and v2 disagree on input: {:?}", input);
-    }
-});
+```text
+FUZZ TARGET (data: bytes)
+    IF data IS valid UTF-8
+        input <- data AS string
+        result_v1 <- PARSER_V1.PARSE(input)
+        result_v2 <- PARSER_V2.PARSE(input)
+        ASSERT result_v1 = result_v2, "v1 and v2 disagree on input: " + input
 ```
 
 This finds inputs where your new implementation differs from the old one — invaluable during rewrites.
@@ -216,12 +182,11 @@ Result: Program reads 995 bytes of adjacent memory (information leak)
 
 ### Integer Overflows
 
-```rust
+```text
 // Vulnerable code
-fn allocate_buffer(width: u32, height: u32) -> Vec<u8> {
-    let size = width * height * 4; // Can overflow!
-    vec![0u8; size as usize]
-}
+FUNCTION ALLOCATE_BUFFER(width: unsigned integer, height: unsigned integer) -> list of bytes
+    size <- width * height * 4  // Can overflow!
+    RETURN NEW list of zeroed bytes WITH length size
 ```
 
 A fuzzer might generate `width = 65536, height = 65536`, causing `width * height * 4` to overflow, allocating a tiny buffer that subsequent writes overflow.
@@ -230,13 +195,12 @@ A fuzzer might generate `width = 65536, height = 65536`, causing `width * height
 
 In Rust, panics don't cause memory corruption, but they do crash the program. For servers, a panic in a request handler crashes the worker or the entire process:
 
-```rust
+```text
 // Found by fuzzing: panic on empty input
-pub fn parse_header(data: &[u8]) -> Header {
-    let version = data[0];  // panics if data is empty
-    let length = u32::from_be_bytes(data[1..5].try_into().unwrap()); // panics if < 5 bytes
+FUNCTION PARSE_HEADER(data: bytes) -> Header
+    version <- data[0]                          // panics if data is empty
+    length <- BYTES_TO_U32(data[1..5])          // panics if < 5 bytes
     // ...
-}
 ```
 
 A fuzzer finds this instantly. A unit test might never test with empty input because the developer assumed "the network layer validates minimum length."
@@ -291,13 +255,11 @@ cargo +nightly fuzz run parse_config fuzz/artifacts/parse_config/crash-abc123
 
 Then write a regression test so the bug stays fixed:
 
-```rust
-#[test]
-fn regression_crash_empty_header() {
+```text
+TEST regression_crash_empty_header
     // Found by fuzzing: parse_header panicked on empty input
-    let result = parse_header(&[]);
-    assert!(result.is_err()); // Must return Err, not panic
-}
+    result <- PARSE_HEADER(empty bytes)
+    ASSERT result IS error  // Must return Err, not panic
 ```
 
 ---

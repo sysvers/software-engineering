@@ -12,138 +12,87 @@ When one object changes state, multiple other objects need to react -- without t
 
 ### Rust Implementation
 
-```rust
-use std::collections::HashMap;
+```text
+STRUCTURE EventBus<E>
+    listeners: map of (event_type: string -> list of callbacks)
 
-type Callback<E> = Box<dyn Fn(&E) + Send + Sync>;
+    FUNCTION NEW() -> EventBus
+        RETURN EventBus { listeners: empty map }
 
-pub struct EventBus<E> {
-    listeners: HashMap<String, Vec<Callback<E>>>,
-}
+    FUNCTION SUBSCRIBE(event_type: string, callback: function(E))
+        ADD callback TO self.listeners[event_type]
 
-impl<E> EventBus<E> {
-    pub fn new() -> Self {
-        Self {
-            listeners: HashMap::new(),
-        }
-    }
-
-    pub fn subscribe(&mut self, event_type: &str, callback: Callback<E>) {
-        self.listeners
-            .entry(event_type.to_string())
-            .or_default()
-            .push(callback);
-    }
-
-    pub fn publish(&self, event_type: &str, event: &E) {
-        if let Some(listeners) = self.listeners.get(event_type) {
-            for listener in listeners {
-                listener(event);
-            }
-        }
-    }
-}
+    FUNCTION PUBLISH(event_type: string, event: E)
+        IF self.listeners HAS event_type
+            FOR EACH listener IN self.listeners[event_type]
+                CALL listener(event)
 
 // Domain events
-#[derive(Debug)]
-struct OrderEvent {
-    order_id: u64,
-    customer_email: String,
-    total: f64,
-    items: Vec<String>,
-}
+STRUCTURE OrderEvent
+    order_id: unsigned integer, customer_email: string, total: float, items: list of string
 
 // Usage -- subscribers know nothing about each other
-fn main() {
-    let mut bus: EventBus<OrderEvent> = EventBus::new();
+FUNCTION MAIN()
+    bus <- NEW EventBus<OrderEvent>()
 
     // Inventory system
-    bus.subscribe("order.placed", Box::new(|event| {
-        println!("Inventory: reserving stock for order {}", event.order_id);
-        for item in &event.items {
-            println!("  Reserving: {item}");
-        }
-    }));
+    bus.SUBSCRIBE("order.placed", event =>
+        PRINT "Inventory: reserving stock for order " + event.order_id
+        FOR item IN event.items: PRINT "  Reserving: " + item)
 
     // Email system
-    bus.subscribe("order.placed", Box::new(|event| {
-        println!("Email: sending confirmation to {}", event.customer_email);
-    }));
+    bus.SUBSCRIBE("order.placed", event =>
+        PRINT "Email: sending confirmation to " + event.customer_email)
 
     // Analytics
-    bus.subscribe("order.placed", Box::new(|event| {
-        println!("Analytics: recording ${:.2} order", event.total);
-    }));
+    bus.SUBSCRIBE("order.placed", event =>
+        PRINT "Analytics: recording $" + event.total + " order")
 
     // Fraud detection
-    bus.subscribe("order.placed", Box::new(|event| {
-        if event.total > 1000.0 {
-            println!("Fraud: flagging high-value order {} for review", event.order_id);
-        }
-    }));
+    bus.SUBSCRIBE("order.placed", event =>
+        IF event.total > 1000.0
+            PRINT "Fraud: flagging high-value order " + event.order_id + " for review")
 
     // Publishing notifies all subscribers
-    bus.publish("order.placed", &OrderEvent {
-        order_id: 42,
-        customer_email: "alice@example.com".to_string(),
-        total: 1500.0,
-        items: vec!["Widget A".into(), "Gadget B".into()],
-    });
-}
+    bus.PUBLISH("order.placed", OrderEvent {
+        order_id: 42, customer_email: "alice@example.com",
+        total: 1500.0, items: ["Widget A", "Gadget B"] })
 ```
 
 ### Channel-Based Observer (Async/Concurrent)
 
 For multi-threaded or async contexts, use channels instead of callbacks:
 
-```rust
-use tokio::sync::broadcast;
+```text
+ENUMERATION AppEvent
+    OrderPlaced { order_id: unsigned integer }
+    PaymentReceived { order_id: unsigned integer, amount: float }
+    OrderShipped { order_id: unsigned integer, tracking: string }
 
-#[derive(Clone, Debug)]
-enum AppEvent {
-    OrderPlaced { order_id: u64 },
-    PaymentReceived { order_id: u64, amount: f64 },
-    OrderShipped { order_id: u64, tracking: String },
-}
-
-async fn run_event_system() {
-    let (tx, _) = broadcast::channel::<AppEvent>(100);
+ASYNC FUNCTION RUN_EVENT_SYSTEM()
+    (tx, _) <- NEW broadcast channel<AppEvent>(capacity: 100)
 
     // Each subscriber gets its own receiver
-    let mut inventory_rx = tx.subscribe();
-    let mut email_rx = tx.subscribe();
+    inventory_rx <- tx.SUBSCRIBE()
+    email_rx <- tx.SUBSCRIBE()
 
     // Inventory listener
-    tokio::spawn(async move {
-        while let Ok(event) = inventory_rx.recv().await {
-            if let AppEvent::OrderPlaced { order_id } = event {
-                println!("Inventory: processing order {order_id}");
-            }
-        }
-    });
+    SPAWN ASYNC TASK
+        WHILE event <- inventory_rx.RECV()
+            IF event IS AppEvent::OrderPlaced { order_id }
+                PRINT "Inventory: processing order " + order_id
 
     // Email listener
-    tokio::spawn(async move {
-        while let Ok(event) = email_rx.recv().await {
-            match event {
-                AppEvent::OrderPlaced { order_id } => {
-                    println!("Email: order {order_id} confirmation sent");
-                }
-                AppEvent::OrderShipped { order_id, tracking } => {
-                    println!("Email: shipping notification for {order_id}, tracking: {tracking}");
-                }
-                _ => {}
-            }
-        }
-    });
+    SPAWN ASYNC TASK
+        WHILE event <- email_rx.RECV()
+            MATCH event
+                CASE OrderPlaced { order_id }: PRINT "Email: order " + order_id + " confirmation sent"
+                CASE OrderShipped { order_id, tracking }: PRINT "Email: shipping for " + order_id
+                DEFAULT: // ignore
 
     // Publish events
-    tx.send(AppEvent::OrderPlaced { order_id: 1 }).unwrap();
-    tx.send(AppEvent::OrderShipped {
-        order_id: 1,
-        tracking: "1Z999AA10123456784".to_string(),
-    }).unwrap();
-}
+    tx.SEND(AppEvent::OrderPlaced { order_id: 1 })
+    tx.SEND(AppEvent::OrderShipped { order_id: 1, tracking: "1Z999AA10123456784" })
 ```
 
 ### Real-World Use Cases
@@ -183,107 +132,70 @@ You need to swap algorithms at runtime without changing the code that uses them.
 
 ### Rust Implementation
 
-```rust
-trait CompressionStrategy {
-    fn compress(&self, data: &[u8]) -> Vec<u8>;
-    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>, DecompressError>;
-    fn name(&self) -> &str;
-}
+```text
+INTERFACE CompressionStrategy
+    FUNCTION COMPRESS(data: bytes) -> bytes
+    FUNCTION DECOMPRESS(data: bytes) -> bytes or DecompressError
+    FUNCTION NAME() -> string
 
-struct GzipStrategy;
-impl CompressionStrategy for GzipStrategy {
-    fn compress(&self, data: &[u8]) -> Vec<u8> {
-        // Use flate2 crate
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(data).unwrap();
-        encoder.finish().unwrap()
-    }
-    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>, DecompressError> {
-        let mut decoder = GzDecoder::new(data);
-        let mut buf = Vec::new();
-        decoder.read_to_end(&mut buf)?;
-        Ok(buf)
-    }
-    fn name(&self) -> &str { "gzip" }
-}
+STRUCTURE GzipStrategy
+    FUNCTION COMPRESS(data) -> GZIP_ENCODE(data)
+    FUNCTION DECOMPRESS(data) -> GZIP_DECODE(data)
+    FUNCTION NAME() -> "gzip"
 
-struct ZstdStrategy { level: i32 }
-impl CompressionStrategy for ZstdStrategy {
-    fn compress(&self, data: &[u8]) -> Vec<u8> {
-        zstd::encode_all(data, self.level).unwrap()
-    }
-    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>, DecompressError> {
-        Ok(zstd::decode_all(data)?)
-    }
-    fn name(&self) -> &str { "zstd" }
-}
+STRUCTURE ZstdStrategy { level: integer }
+    FUNCTION COMPRESS(data) -> ZSTD_ENCODE(data, self.level)
+    FUNCTION DECOMPRESS(data) -> ZSTD_DECODE(data)
+    FUNCTION NAME() -> "zstd"
 
-struct NoCompression;
-impl CompressionStrategy for NoCompression {
-    fn compress(&self, data: &[u8]) -> Vec<u8> { data.to_vec() }
-    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>, DecompressError> { Ok(data.to_vec()) }
-    fn name(&self) -> &str { "none" }
-}
+STRUCTURE NoCompression
+    FUNCTION COMPRESS(data) -> COPY(data)
+    FUNCTION DECOMPRESS(data) -> COPY(data)
+    FUNCTION NAME() -> "none"
 
 // The file store does not know which compression is used
-struct FileStore {
-    compression: Box<dyn CompressionStrategy>,
-    base_path: PathBuf,
-}
+STRUCTURE FileStore
+    compression: CompressionStrategy, base_path: path
 
-impl FileStore {
-    fn new(path: &str, compression: Box<dyn CompressionStrategy>) -> Self {
-        println!("FileStore using {} compression", compression.name());
-        Self {
-            compression,
-            base_path: PathBuf::from(path),
-        }
-    }
+    FUNCTION NEW(path, compression) -> FileStore
+        PRINT "FileStore using " + compression.NAME() + " compression"
+        RETURN FileStore { compression, base_path: path }
 
-    fn save(&self, name: &str, data: &[u8]) -> Result<(), IoError> {
-        let compressed = self.compression.compress(data);
-        std::fs::write(self.base_path.join(name), &compressed)
-    }
+    FUNCTION SAVE(name: string, data: bytes) -> void or IoError
+        compressed <- self.compression.COMPRESS(data)
+        WRITE compressed TO self.base_path / name
 
-    fn load(&self, name: &str) -> Result<Vec<u8>, IoError> {
-        let compressed = std::fs::read(self.base_path.join(name))?;
-        self.compression.decompress(&compressed)
-            .map_err(|e| IoError::new(ErrorKind::InvalidData, e))
-    }
-}
+    FUNCTION LOAD(name: string) -> bytes or IoError
+        compressed <- READ self.base_path / name
+        RETURN self.compression.DECOMPRESS(compressed)
 
 // Choose strategy based on configuration
-let strategy: Box<dyn CompressionStrategy> = match config.compression.as_str() {
-    "gzip" => Box::new(GzipStrategy),
-    "zstd" => Box::new(ZstdStrategy { level: 3 }),
-    "none" => Box::new(NoCompression),
-    _ => Box::new(GzipStrategy), // sensible default
-};
+strategy <- MATCH config.compression
+    CASE "gzip": NEW GzipStrategy
+    CASE "zstd":  NEW ZstdStrategy { level: 3 }
+    CASE "none":  NEW NoCompression
+    DEFAULT:      NEW GzipStrategy  // sensible default
 
-let store = FileStore::new("/data/files", strategy);
+store <- FileStore.NEW("/data/files", strategy)
 ```
 
 ### Closure-Based Strategy (Lightweight Alternative)
 
 When the strategy is a single function, closures work well:
 
-```rust
-type PricingFn = Box<dyn Fn(f64, u32) -> f64>;
+```text
+TYPE PricingFn <- function(price: float, qty: unsigned integer) -> float
 
-fn regular_pricing() -> PricingFn {
-    Box::new(|price, qty| price * qty as f64)
-}
+FUNCTION REGULAR_PRICING() -> PricingFn
+    RETURN (price, qty) => price * qty
 
-fn bulk_pricing(threshold: u32, discount: f64) -> PricingFn {
-    Box::new(move |price, qty| {
-        let total = price * qty as f64;
-        if qty >= threshold { total * (1.0 - discount) } else { total }
-    })
-}
+FUNCTION BULK_PRICING(threshold: unsigned integer, discount: float) -> PricingFn
+    RETURN (price, qty) =>
+        total <- price * qty
+        IF qty ≥ threshold THEN total * (1.0 - discount) ELSE total
 
-fn calculate_order(items: &[(f64, u32)], pricing: &PricingFn) -> f64 {
-    items.iter().map(|(p, q)| pricing(*p, *q)).sum()
-}
+FUNCTION CALCULATE_ORDER(items: list of (float, unsigned integer), pricing: PricingFn) -> float
+    RETURN SUM OF pricing(p, q) FOR EACH (p, q) IN items
 ```
 
 ### Real-World Use Cases
@@ -322,105 +234,60 @@ You need to encapsulate a request as an object, enabling you to parameterize cli
 
 ### Rust Implementation
 
-```rust
-trait Command: Send {
-    fn execute(&mut self) -> Result<(), CommandError>;
-    fn undo(&mut self) -> Result<(), CommandError>;
-    fn description(&self) -> &str;
-}
+```text
+INTERFACE Command
+    FUNCTION EXECUTE() -> void or CommandError
+    FUNCTION UNDO() -> void or CommandError
+    FUNCTION DESCRIPTION() -> string
 
 // Text editor commands
-struct InsertText {
-    document: Arc<Mutex<String>>,
-    position: usize,
-    text: String,
-}
+STRUCTURE InsertText { document: shared locked string, position: size, text: string }
+    FUNCTION EXECUTE() -> void or CommandError
+        LOCK document
+        IF self.position > document.length THEN RETURN Err(InvalidPosition)
+        INSERT self.text INTO document AT self.position
+        RETURN Ok
 
-impl Command for InsertText {
-    fn execute(&mut self) -> Result<(), CommandError> {
-        let mut doc = self.document.lock().unwrap();
-        if self.position > doc.len() {
-            return Err(CommandError::InvalidPosition);
-        }
-        doc.insert_str(self.position, &self.text);
-        Ok(())
-    }
+    FUNCTION UNDO() -> void or CommandError
+        LOCK document
+        REMOVE characters from position TO position + text.length IN document
+        RETURN Ok
 
-    fn undo(&mut self) -> Result<(), CommandError> {
-        let mut doc = self.document.lock().unwrap();
-        doc.replace_range(self.position..self.position + self.text.len(), "");
-        Ok(())
-    }
+STRUCTURE DeleteText { document: shared locked string, position: size, length: size, deleted: optional string }
+    FUNCTION EXECUTE() -> void or CommandError
+        LOCK document
+        self.deleted <- document[position..position+length]  // save for undo
+        REMOVE characters from position TO position + length IN document
+        RETURN Ok
 
-    fn description(&self) -> &str { "Insert text" }
-}
-
-struct DeleteText {
-    document: Arc<Mutex<String>>,
-    position: usize,
-    length: usize,
-    deleted: Option<String>, // saved for undo
-}
-
-impl Command for DeleteText {
-    fn execute(&mut self) -> Result<(), CommandError> {
-        let mut doc = self.document.lock().unwrap();
-        self.deleted = Some(doc[self.position..self.position + self.length].to_string());
-        doc.replace_range(self.position..self.position + self.length, "");
-        Ok(())
-    }
-
-    fn undo(&mut self) -> Result<(), CommandError> {
-        if let Some(ref deleted) = self.deleted {
-            let mut doc = self.document.lock().unwrap();
-            doc.insert_str(self.position, deleted);
-            Ok(())
-        } else {
-            Err(CommandError::NothingToUndo)
-        }
-    }
-
-    fn description(&self) -> &str { "Delete text" }
-}
+    FUNCTION UNDO() -> void or CommandError
+        IF self.deleted EXISTS
+            LOCK document; INSERT self.deleted AT self.position; RETURN Ok
+        ELSE
+            RETURN Err(NothingToUndo)
 
 // Command history for undo/redo
-struct CommandHistory {
-    executed: Vec<Box<dyn Command>>,
-    undone: Vec<Box<dyn Command>>,
-}
+STRUCTURE CommandHistory
+    executed: list of Command, undone: list of Command
 
-impl CommandHistory {
-    fn new() -> Self {
-        Self { executed: vec![], undone: vec![] }
-    }
+    FUNCTION EXECUTE(cmd: Command) -> void or CommandError
+        cmd.EXECUTE()?
+        APPEND cmd TO self.executed
+        CLEAR self.undone  // new action invalidates redo stack
 
-    fn execute(&mut self, mut cmd: Box<dyn Command>) -> Result<(), CommandError> {
-        cmd.execute()?;
-        self.executed.push(cmd);
-        self.undone.clear(); // new action invalidates redo stack
-        Ok(())
-    }
+    FUNCTION UNDO() -> void or CommandError
+        IF self.executed IS NOT EMPTY
+            cmd <- POP from self.executed
+            cmd.UNDO()?
+            APPEND cmd TO self.undone
+        ELSE RETURN Err(NothingToUndo)
 
-    fn undo(&mut self) -> Result<(), CommandError> {
-        if let Some(mut cmd) = self.executed.pop() {
-            cmd.undo()?;
-            self.undone.push(cmd);
-            Ok(())
-        } else {
-            Err(CommandError::NothingToUndo)
-        }
-    }
-
-    fn redo(&mut self) -> Result<(), CommandError> {
-        if let Some(mut cmd) = self.undone.pop() {
-            cmd.execute()?;
-            self.executed.push(cmd);
-            Ok(())
-        } else {
-            Err(CommandError::NothingToRedo)
-        }
-    }
-}
+    FUNCTION REDO() -> void or CommandError
+        IF self.undone IS NOT EMPTY
+            cmd <- POP from self.undone
+            cmd.EXECUTE()?
+            APPEND cmd TO self.executed
+        ELSE RETURN Err(NothingToRedo)
 ```
 
 ### Real-World Use Cases
@@ -462,95 +329,57 @@ An object behaves differently based on its internal state. The naive approach --
 
 Rust's enums with data are the natural fit for the state pattern:
 
-```rust
-use chrono::{DateTime, Utc};
+```text
+ENUMERATION OrderState
+    Pending
+    Confirmed { confirmed_at: DateTime }
+    Processing { started_at: DateTime, worker_id: string }
+    Shipped { tracking_number: string, shipped_at: DateTime }
+    Delivered { delivered_at: DateTime }
+    Cancelled { reason: string, cancelled_at: DateTime }
 
-#[derive(Debug)]
-enum OrderState {
-    Pending,
-    Confirmed { confirmed_at: DateTime<Utc> },
-    Processing { started_at: DateTime<Utc>, worker_id: String },
-    Shipped { tracking_number: String, shipped_at: DateTime<Utc> },
-    Delivered { delivered_at: DateTime<Utc> },
-    Cancelled { reason: String, cancelled_at: DateTime<Utc> },
-}
+    FUNCTION CONFIRM(self) -> OrderState or OrderError
+        MATCH self
+            CASE Pending: RETURN Ok(Confirmed { confirmed_at: NOW() })
+            DEFAULT: RETURN Err("Cannot confirm order in state: " + self)
 
-#[derive(Debug)]
-struct OrderError(String);
+    FUNCTION START_PROCESSING(self, worker: string) -> OrderState or OrderError
+        MATCH self
+            CASE Confirmed: RETURN Ok(Processing { started_at: NOW(), worker_id: worker })
+            DEFAULT: RETURN Err("Cannot process order in state: " + self)
 
-impl OrderState {
-    fn confirm(self) -> Result<OrderState, OrderError> {
-        match self {
-            OrderState::Pending => Ok(OrderState::Confirmed {
-                confirmed_at: Utc::now(),
-            }),
-            other => Err(OrderError(format!("Cannot confirm order in state: {other:?}"))),
-        }
-    }
+    FUNCTION SHIP(self, tracking: string) -> OrderState or OrderError
+        MATCH self
+            CASE Processing: RETURN Ok(Shipped { tracking_number: tracking, shipped_at: NOW() })
+            DEFAULT: RETURN Err("Cannot ship order in state: " + self)
 
-    fn start_processing(self, worker: String) -> Result<OrderState, OrderError> {
-        match self {
-            OrderState::Confirmed { .. } => Ok(OrderState::Processing {
-                started_at: Utc::now(),
-                worker_id: worker,
-            }),
-            other => Err(OrderError(format!("Cannot process order in state: {other:?}"))),
-        }
-    }
+    FUNCTION DELIVER(self) -> OrderState or OrderError
+        MATCH self
+            CASE Shipped: RETURN Ok(Delivered { delivered_at: NOW() })
+            DEFAULT: RETURN Err("Cannot deliver order in state: " + self)
 
-    fn ship(self, tracking: String) -> Result<OrderState, OrderError> {
-        match self {
-            OrderState::Processing { .. } => Ok(OrderState::Shipped {
-                tracking_number: tracking,
-                shipped_at: Utc::now(),
-            }),
-            other => Err(OrderError(format!("Cannot ship order in state: {other:?}"))),
-        }
-    }
-
-    fn deliver(self) -> Result<OrderState, OrderError> {
-        match self {
-            OrderState::Shipped { .. } => Ok(OrderState::Delivered {
-                delivered_at: Utc::now(),
-            }),
-            other => Err(OrderError(format!("Cannot deliver order in state: {other:?}"))),
-        }
-    }
-
-    fn cancel(self, reason: String) -> Result<OrderState, OrderError> {
-        match self {
-            OrderState::Pending | OrderState::Confirmed { .. } => {
-                Ok(OrderState::Cancelled {
-                    reason,
-                    cancelled_at: Utc::now(),
-                })
-            }
-            OrderState::Processing { .. } => {
+    FUNCTION CANCEL(self, reason: string) -> OrderState or OrderError
+        MATCH self
+            CASE Pending OR Confirmed:
+                RETURN Ok(Cancelled { reason, cancelled_at: NOW() })
+            CASE Processing:
                 // Can cancel during processing, but with a fee
-                Ok(OrderState::Cancelled {
-                    reason: format!("{reason} (cancellation fee applied)"),
-                    cancelled_at: Utc::now(),
-                })
-            }
-            other => Err(OrderError(format!("Cannot cancel order in state: {other:?}"))),
-        }
-    }
+                RETURN Ok(Cancelled { reason: reason + " (cancellation fee applied)", cancelled_at: NOW() })
+            DEFAULT: RETURN Err("Cannot cancel order in state: " + self)
 
-    fn is_terminal(&self) -> bool {
-        matches!(self, OrderState::Delivered { .. } | OrderState::Cancelled { .. })
-    }
-}
+    FUNCTION IS_TERMINAL(self) -> boolean
+        RETURN self IS Delivered OR self IS Cancelled
 
 // Usage
-let order = OrderState::Pending;
-let order = order.confirm()?;
-let order = order.start_processing("worker-1".to_string())?;
-let order = order.ship("1Z999AA10123456784".to_string())?;
-let order = order.deliver()?;
+order <- OrderState::Pending
+order <- order.CONFIRM()?
+order <- order.START_PROCESSING("worker-1")?
+order <- order.SHIP("1Z999AA10123456784")?
+order <- order.DELIVER()?
 
 // Invalid transitions are caught
-let pending = OrderState::Pending;
-assert!(pending.ship("tracking".to_string()).is_err()); // Cannot ship a pending order
+pending <- OrderState::Pending
+ASSERT pending.SHIP("tracking") IS error  // Cannot ship a pending order
 ```
 
 ### Real-World Use Cases
@@ -591,107 +420,72 @@ You need to traverse a collection without exposing its internal structure. Diffe
 
 Rust has first-class support for iterators through the `Iterator` trait:
 
-```rust
+```text
 // Custom collection with a custom iterator
-struct Fibonacci {
-    a: u64,
-    b: u64,
-    limit: u64,
-}
+STRUCTURE Fibonacci
+    a: unsigned integer, b: unsigned integer, limit: unsigned integer
 
-impl Fibonacci {
-    fn new(limit: u64) -> Self {
-        Self { a: 0, b: 1, limit }
-    }
-}
+    FUNCTION NEW(limit) -> Fibonacci
+        RETURN Fibonacci { a: 0, b: 1, limit }
 
-impl Iterator for Fibonacci {
-    type Item = u64;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.a > self.limit {
-            return None;
-        }
-        let current = self.a;
-        let next = self.a + self.b;
-        self.a = self.b;
-        self.b = next;
-        Some(current)
-    }
-}
+// Implement Iterator for Fibonacci
+    FUNCTION NEXT() -> optional unsigned integer
+        IF self.a > self.limit
+            RETURN None
+        current <- self.a
+        next <- self.a + self.b
+        self.a <- self.b
+        self.b <- next
+        RETURN Some(current)
 
 // Usage -- works with all iterator adapters
-let sum: u64 = Fibonacci::new(1_000_000)
-    .filter(|n| n % 2 == 0)
-    .sum();
+sum <- Fibonacci.NEW(1000000)
+    .FILTER(n => n MOD 2 = 0)
+    .SUM()
 
-let first_ten: Vec<u64> = Fibonacci::new(u64::MAX)
-    .take(10)
-    .collect();
+first_ten <- Fibonacci.NEW(MAX_U64)
+    .TAKE(10)
+    .COLLECT()
 ```
 
 ### A More Practical Example: Paginated API Iterator
 
-```rust
-struct PaginatedApiIterator {
-    client: ApiClient,
-    endpoint: String,
-    page: u32,
-    buffer: Vec<Record>,
-    done: bool,
-}
+```text
+STRUCTURE PaginatedApiIterator
+    client: ApiClient, endpoint: string, page: unsigned integer
+    buffer: list of Record, done: boolean
 
-impl PaginatedApiIterator {
-    fn new(client: ApiClient, endpoint: &str) -> Self {
-        Self {
-            client,
-            endpoint: endpoint.to_string(),
-            page: 1,
-            buffer: Vec::new(),
-            done: false,
-        }
-    }
-}
+    FUNCTION NEW(client, endpoint) -> PaginatedApiIterator
+        RETURN PaginatedApiIterator { client, endpoint, page: 1, buffer: [], done: false }
 
-impl Iterator for PaginatedApiIterator {
-    type Item = Result<Record, ApiError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+// Implement Iterator for PaginatedApiIterator
+    FUNCTION NEXT() -> optional (Record or ApiError)
         // Return buffered items first
-        if let Some(record) = self.buffer.pop() {
-            return Some(Ok(record));
-        }
+        IF self.buffer IS NOT EMPTY
+            RETURN Some(Ok(POP from self.buffer))
 
-        if self.done {
-            return None;
-        }
+        IF self.done
+            RETURN None
 
         // Fetch next page
-        match self.client.get(&self.endpoint, self.page) {
-            Ok(response) => {
-                if response.records.is_empty() {
-                    self.done = true;
-                    None
-                } else {
-                    self.page += 1;
-                    self.buffer = response.records;
-                    self.buffer.reverse(); // so pop() gives items in order
-                    self.buffer.pop().map(Ok)
-                }
-            }
-            Err(e) => {
-                self.done = true;
-                Some(Err(e))
-            }
-        }
-    }
-}
+        MATCH self.client.GET(self.endpoint, self.page)
+            CASE Ok(response):
+                IF response.records IS EMPTY
+                    self.done <- true; RETURN None
+                ELSE
+                    self.page <- self.page + 1
+                    self.buffer <- response.records
+                    REVERSE self.buffer  // so pop gives items in order
+                    RETURN Some(Ok(POP from self.buffer))
+            CASE Err(e):
+                self.done <- true
+                RETURN Some(Err(e))
 
 // Callers see a simple iterator, unaware of pagination
-let all_users: Vec<User> = PaginatedApiIterator::new(client, "/api/users")
-    .filter_map(|r| r.ok())
-    .take(100)
-    .collect();
+all_users <- PaginatedApiIterator.NEW(client, "/api/users")
+    .FILTER_MAP(r => r if Ok)
+    .TAKE(100)
+    .COLLECT()
 ```
 
 ### Real-World Use Cases

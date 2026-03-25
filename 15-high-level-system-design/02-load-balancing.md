@@ -152,106 +152,73 @@ The unhealthy threshold prevents a single dropped packet from removing a healthy
 
 A production health check endpoint should report meaningful status. Here is a comprehensive example:
 
-```rust
-use axum::{routing::get, Json, Router};
-use serde::Serialize;
-use std::sync::Arc;
-use std::time::Instant;
-use tokio::net::TcpListener;
+```text
+STRUCTURE HealthResponse:
+    status ← string
+    uptime_secs ← integer
+    version ← string
+    checks ← HealthChecks
 
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    uptime_secs: u64,
-    version: &'static str,
-    checks: HealthChecks,
-}
+STRUCTURE HealthChecks:
+    database ← CheckResult
+    cache ← CheckResult
 
-#[derive(Serialize)]
-struct HealthChecks {
-    database: CheckResult,
-    cache: CheckResult,
-}
+STRUCTURE CheckResult:
+    status ← string
+    latency_ms ← integer
 
-#[derive(Serialize)]
-struct CheckResult {
-    status: &'static str,
-    latency_ms: u64,
-}
-
-static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+GLOBAL START_TIME ← timestamp (initialized once)
 
 /// Deep health check: verifies all dependencies.
 /// The load balancer calls this endpoint. If it returns non-200
 /// or times out, the server is removed from the pool.
-async fn health_check(state: Arc<AppState>) -> Json<HealthResponse> {
-    let start = START_TIME.get_or_init(Instant::now);
-
+PROCEDURE HEALTH_CHECK(state):
     // Check database connectivity
-    let db_start = Instant::now();
-    let db_ok = sqlx::query("SELECT 1")
-        .execute(&state.db_pool)
-        .await
-        .is_ok();
-    let db_latency = db_start.elapsed().as_millis() as u64;
+    db_start ← NOW()
+    db_ok ← AWAIT EXECUTE state.db_pool: "SELECT 1" SUCCEEDS
+    db_latency ← MILLISECONDS_SINCE(db_start)
 
     // Check cache connectivity
-    let cache_start = Instant::now();
-    let cache_ok = state.redis.ping().await.is_ok();
-    let cache_latency = cache_start.elapsed().as_millis() as u64;
+    cache_start ← NOW()
+    cache_ok ← AWAIT state.redis.PING() SUCCEEDS
+    cache_latency ← MILLISECONDS_SINCE(cache_start)
 
-    let all_healthy = db_ok && cache_ok;
+    all_healthy ← db_ok AND cache_ok
 
-    Json(HealthResponse {
-        status: if all_healthy { "healthy" } else { "degraded" },
-        uptime_secs: start.elapsed().as_secs(),
-        version: env!("CARGO_PKG_VERSION"),
-        checks: HealthChecks {
-            database: CheckResult {
-                status: if db_ok { "up" } else { "down" },
-                latency_ms: db_latency,
-            },
-            cache: CheckResult {
-                status: if cache_ok { "up" } else { "down" },
-                latency_ms: cache_latency,
-            },
-        },
-    })
-}
+    RETURN JSON {
+        status ← IF all_healthy THEN "healthy" ELSE "degraded",
+        uptime_secs ← SECONDS_SINCE(START_TIME),
+        version ← PACKAGE_VERSION,
+        checks ← {
+            database ← { status ← IF db_ok THEN "up" ELSE "down", latency_ms ← db_latency },
+            cache ← { status ← IF cache_ok THEN "up" ELSE "down", latency_ms ← cache_latency }
+        }
+    }
 
 /// Shallow liveness check: just confirms the process is running.
 /// Use this for Kubernetes liveness probes (restart if dead).
 /// Use the deep health check for readiness probes (stop sending traffic).
-async fn liveness() -> &'static str {
-    "ok"
-}
+PROCEDURE LIVENESS():
+    RETURN "ok"
 
-struct AppState {
-    db_pool: sqlx::PgPool,
-    redis: redis::Client,
-}
+STRUCTURE AppState:
+    db_pool ← PgPool
+    redis ← RedisClient
 
-#[tokio::main]
-async fn main() {
-    START_TIME.get_or_init(Instant::now);
+PROCEDURE MAIN():
+    START_TIME ← NOW()
 
-    let state = Arc::new(AppState {
-        db_pool: sqlx::PgPool::connect("postgres://localhost/mydb")
-            .await
-            .unwrap(),
-        redis: redis::Client::open("redis://localhost").unwrap(),
-    });
+    state ← NEW AppState {
+        db_pool ← AWAIT CONNECT("postgres://localhost/mydb"),
+        redis ← OPEN("redis://localhost")
+    }
 
-    let app = Router::new()
-        .route("/health", get({
-            let state = state.clone();
-            move || health_check(state.clone())
-        }))
-        .route("/livez", get(liveness));
+    app ← NEW Router
+        REGISTER "/health" with GET → HEALTH_CHECK(state)
+        REGISTER "/livez" with GET → LIVENESS
 
-    let listener = TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
-}
+    listener ← AWAIT BIND("0.0.0.0:8080")
+    AWAIT SERVE(listener, app)
 ```
 
 **Key design decisions:**

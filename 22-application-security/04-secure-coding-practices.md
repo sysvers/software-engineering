@@ -6,32 +6,18 @@ Security is not a feature bolted on at the end. It is a property of how you writ
 
 Validate all input at the boundary. Use strong types to make invalid states unrepresentable. Reject unexpected input before it reaches business logic.
 
-```rust
-use validator::Validate;
-use serde::Deserialize;
-use axum::{http::StatusCode, Json};
+```text
+STRUCTURE CreateUserRequest
+    email : String          // must be valid email format
+    password : String       // length between 8 and 128
+    name : String           // length between 1 and 100
 
-#[derive(Debug, Deserialize, Validate)]
-struct CreateUserRequest {
-    #[validate(email)]
-    email: String,
-
-    #[validate(length(min = 8, max = 128))]
-    password: String,
-
-    #[validate(length(min = 1, max = 100))]
-    name: String,
-}
-
-async fn create_user(
-    Json(payload): Json<CreateUserRequest>,
-) -> Result<Json<User>, (StatusCode, String)> {
-    payload.validate().map_err(|e| {
-        (StatusCode::BAD_REQUEST, format!("Validation error: {}", e))
-    })?;
+PROCEDURE CREATE_USER(payload) → Result<User>
+    IF NOT VALIDATE(payload) THEN
+        RETURN Error(400 BAD REQUEST, "Validation error: " + errors)
+    END IF
     // proceed with validated data
-    todo!()
-}
+    ...
 ```
 
 Validation rules:
@@ -42,52 +28,42 @@ Validation rules:
 
 Rust's type system adds a second layer: use newtypes to enforce invariants at compile time.
 
-```rust
-struct EmailAddress(String);
+```text
+STRUCTURE EmailAddress
+    value : String
 
-impl EmailAddress {
-    fn parse(s: &str) -> Result<Self, ValidationError> {
-        // Validate email format
-        if !s.contains('@') || s.len() > 254 {
-            return Err(ValidationError::InvalidEmail);
-        }
-        Ok(Self(s.to_lowercase()))
-    }
-}
+PROCEDURE EmailAddress.PARSE(s) → Result<EmailAddress>
+    // Validate email format
+    IF s DOES NOT CONTAIN '@' OR LENGTH(s) > 254 THEN
+        RETURN Error(InvalidEmail)
+    END IF
+    RETURN Ok(NEW EmailAddress(LOWERCASE(s)))
 ```
 
 ## Parameterized Queries
 
 Never concatenate user input into SQL strings. This is the single most important rule for preventing injection. Parameterized queries separate code from data.
 
-```rust
-use sqlx::PgPool;
-
+```text
 // BAD: string interpolation creates SQL injection
-async fn search_bad(pool: &PgPool, term: &str) -> Result<Vec<Product>, sqlx::Error> {
-    let query = format!("SELECT * FROM products WHERE name LIKE '%{}%'", term);
-    sqlx::query_as::<_, Product>(&query).fetch_all(pool).await
-}
+PROCEDURE SEARCH_BAD(pool, term) → Result<List<Product>>
+    query ← "SELECT * FROM products WHERE name LIKE '%" + term + "%'"
+    RETURN EXECUTE_QUERY(pool, query)
 
 // GOOD: parameterized query
-async fn search(pool: &PgPool, term: &str) -> Result<Vec<Product>, sqlx::Error> {
-    sqlx::query_as::<_, Product>("SELECT * FROM products WHERE name LIKE $1")
-        .bind(format!("%{}%", term))
-        .fetch_all(pool)
-        .await
-}
+PROCEDURE SEARCH(pool, term) → Result<List<Product>>
+    RETURN EXECUTE_QUERY(pool,
+        "SELECT * FROM products WHERE name LIKE $1",
+        BIND "%" + term + "%")
 ```
 
 With `sqlx`, you can go further and use compile-time checked queries that verify your SQL against the actual database schema:
 
-```rust
-let products = sqlx::query_as!(
-    Product,
+```text
+// Compile-time checked query -- catches SQL errors and type mismatches at build time
+products ← EXECUTE_CHECKED_QUERY(pool,
     "SELECT id, name, price FROM products WHERE name LIKE $1",
-    format!("%{}%", term)
-)
-.fetch_all(pool)
-.await?;
+    BIND "%" + term + "%")
 ```
 
 This catches SQL syntax errors and type mismatches at compile time, not at runtime.
@@ -99,21 +75,16 @@ An attacker injects malicious JavaScript into a page viewed by other users. Thre
 - **Reflected XSS** -- Malicious script in a URL parameter, reflected back in the response
 - **DOM-based XSS** -- Malicious script manipulates the DOM client-side
 
-```rust
-use axum::response::Html;
-
+```text
 // BAD: raw user input injected into HTML
-async fn profile_bad(name: &str) -> Html<String> {
-    Html(format!("<h1>Hello, {}</h1>", name))
+PROCEDURE PROFILE_BAD(name) → HTML
+    RETURN HTML("<h1>Hello, " + name + "</h1>")
     // If name is: <script>alert('xss')</script>, it executes
-}
 
-// GOOD: use a template engine that escapes by default (Askama)
-#[derive(askama::Template)]
-#[template(path = "profile.html")]
-struct ProfileTemplate<'a> {
-    name: &'a str,  // Askama auto-escapes this in the template
-}
+// GOOD: use a template engine that escapes by default
+STRUCTURE ProfileTemplate
+    name : String   // Template engine auto-escapes this in the template
+// Render using template file "profile.html" with auto-escaping
 ```
 
 Prevention checklist:
@@ -132,27 +103,19 @@ Prevention strategies (use at least one, preferably combine):
 
 2. **CSRF tokens** -- Generate a random token per session, embed it in forms, and verify it on the server.
 
-```rust
-use axum::{extract::Form, http::StatusCode, Extension};
+```text
+STRUCTURE TransferForm
+    to_account : String
+    amount : Float
+    csrf_token : String
 
-#[derive(Deserialize)]
-struct TransferForm {
-    to_account: String,
-    amount: f64,
-    csrf_token: String,
-}
-
-async fn transfer(
-    Form(form): Form<TransferForm>,
-    Extension(session): Extension<Session>,
-) -> Result<StatusCode, StatusCode> {
+PROCEDURE TRANSFER(form, session) → Result<StatusCode>
     // Verify CSRF token matches the one stored in the session
-    if form.csrf_token != session.csrf_token {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    IF form.csrf_token ≠ session.csrf_token THEN
+        RETURN Error(403 FORBIDDEN)
+    END IF
     // Process transfer
-    todo!()
-}
+    ...
 ```
 
 3. **Custom request headers** -- Require a custom header (e.g., `X-Requested-With`) that browsers do not include in cross-origin form submissions or simple requests.
@@ -161,42 +124,30 @@ async fn transfer(
 
 Apply security headers as middleware to every response. These headers instruct the browser to enable security features.
 
-```rust
-use axum::{middleware, http::{Request, HeaderValue}, response::Response};
-
-async fn security_headers<B>(request: Request<B>, next: middleware::Next<B>) -> Response {
-    let mut response = next.run(request).await;
-    let headers = response.headers_mut();
+```text
+PROCEDURE SECURITY_HEADERS(request, next) → Response
+    response ← next.RUN(request)
+    headers ← response.HEADERS()
 
     // Prevent MIME type sniffing
-    headers.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    SET headers["X-Content-Type-Options"] ← "nosniff"
 
     // Prevent clickjacking by disallowing framing
-    headers.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+    SET headers["X-Frame-Options"] ← "DENY"
 
     // Disable the XSS auditor (it can introduce vulnerabilities)
-    headers.insert("X-XSS-Protection", HeaderValue::from_static("0"));
+    SET headers["X-XSS-Protection"] ← "0"
 
     // Enforce HTTPS for 1 year, including subdomains
-    headers.insert(
-        "Strict-Transport-Security",
-        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-    );
+    SET headers["Strict-Transport-Security"] ← "max-age=31536000; includeSubDomains"
 
     // Restrict content sources
-    headers.insert(
-        "Content-Security-Policy",
-        HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self'"),
-    );
+    SET headers["Content-Security-Policy"] ← "default-src 'self'; script-src 'self'; style-src 'self'"
 
     // Control referrer information sent to other origins
-    headers.insert(
-        "Referrer-Policy",
-        HeaderValue::from_static("strict-origin-when-cross-origin"),
-    );
+    SET headers["Referrer-Policy"] ← "strict-origin-when-cross-origin"
 
-    response
-}
+    RETURN response
 ```
 
 Header explanations:
@@ -216,81 +167,68 @@ Principles:
 - **Minimize surface area.** Disable unused features, endpoints, and debug tooling in production.
 - **Environment-aware configuration.** Separate development and production configurations. Debug mode, verbose error messages, and permissive CORS belong in development only.
 
-```rust
-#[derive(Clone)]
-struct SecurityConfig {
-    cors_origins: Vec<String>,
-    debug_errors: bool,
-    require_https: bool,
-}
+```text
+STRUCTURE SecurityConfig
+    cors_origins : List<String>
+    debug_errors : Boolean
+    require_https : Boolean
 
-impl SecurityConfig {
-    fn production() -> Self {
-        Self {
-            cors_origins: vec!["https://app.example.com".to_string()],
-            debug_errors: false,
-            require_https: true,
-        }
+PROCEDURE SecurityConfig.PRODUCTION() → SecurityConfig
+    RETURN SecurityConfig {
+        cors_origins ← ["https://app.example.com"],
+        debug_errors ← FALSE,
+        require_https ← TRUE
     }
 
-    fn development() -> Self {
-        Self {
-            cors_origins: vec!["http://localhost:3000".to_string()],
-            debug_errors: true,
-            require_https: false,
-        }
+PROCEDURE SecurityConfig.DEVELOPMENT() → SecurityConfig
+    RETURN SecurityConfig {
+        cors_origins ← ["http://localhost:3000"],
+        debug_errors ← TRUE,
+        require_https ← FALSE
     }
-}
 ```
 
 ## Error Handling
 
 Never expose internal details in error responses. Stack traces, database error messages, and internal paths give attackers information about your system.
 
-```rust
+```text
 // BAD: exposes internal details
-async fn get_user_bad(pool: &PgPool, id: u64) -> Result<Json<User>, String> {
-    db::get_user(pool, id)
-        .await
-        .map(Json)
-        .map_err(|e| format!("Database error: {}", e))  // Leaks DB info
-}
+PROCEDURE GET_USER_BAD(pool, id) → Result<User>
+    result ← DB_GET_USER(pool, id)
+    IF result IS ERROR THEN
+        RETURN Error("Database error: " + error_details)  // Leaks DB info
+    END IF
+    RETURN Ok(result)
 
 // GOOD: generic error to client, detailed error to logs
-async fn get_user(pool: &PgPool, id: u64) -> Result<Json<User>, StatusCode> {
-    db::get_user(pool, id)
-        .await
-        .map(Json)
-        .map_err(|e| {
-            tracing::error!("Failed to fetch user {}: {}", id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })
-}
+PROCEDURE GET_USER(pool, id) → Result<User>
+    result ← DB_GET_USER(pool, id)
+    IF result IS ERROR THEN
+        LOG ERROR "Failed to fetch user " + id + ": " + error_details
+        RETURN Error(500 INTERNAL SERVER ERROR)
+    END IF
+    RETURN Ok(result)
 ```
 
 ## Logging Sensitive Data
 
 Never log passwords, credit card numbers, tokens, or personal data. Logs are often stored with weaker access controls than production databases and may be shipped to third-party aggregation services.
 
-```rust
+```text
 // BAD: logs the password
-tracing::info!("Login attempt: email={}, password={}", email, password);
+LOG INFO "Login attempt: email=" + email + ", password=" + password
 
 // GOOD: log the event without sensitive data
-tracing::info!("Login attempt: email={}", email);
+LOG INFO "Login attempt: email=" + email
 
 // GOOD: redact sensitive fields in structs
-#[derive(Debug)]
-struct AuditableRequest {
-    email: String,
-    password: String, // should never appear in logs
-}
+STRUCTURE AuditableRequest
+    email : String
+    password : String   // should never appear in logs
 
-impl std::fmt::Display for AuditableRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "AuditableRequest {{ email: {}, password: [REDACTED] }}", self.email)
-    }
-}
+PROCEDURE AuditableRequest.TO_STRING() → String
+    RETURN "AuditableRequest { email: " + self.email + ", password: [REDACTED] }"
 ```
 
 ## Common Mistakes

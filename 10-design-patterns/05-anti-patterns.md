@@ -21,74 +21,62 @@ A single struct, class, or module that knows too much and does too much. It accu
 
 ### Real Example
 
-```rust
+```text
 // The God Object -- this is NOT how to write code
-struct Application {
-    db_pool: PgPool,
-    redis: RedisClient,
-    config: AppConfig,
-    email_client: SmtpClient,
-    payment_processor: StripeClient,
-    search_index: ElasticClient,
-    cache: HashMap<String, CachedValue>,
-    rate_limiter: RateLimiter,
-    metrics: MetricsCollector,
-    logger: Logger,
-    users: Vec<User>,
-    orders: Vec<Order>,
-    products: Vec<Product>,
-}
+RECORD Application
+    db_pool: PgPool
+    redis: RedisClient
+    config: AppConfig
+    email_client: SmtpClient
+    payment_processor: StripeClient
+    search_index: ElasticClient
+    cache: Map<String, CachedValue>
+    rate_limiter: RateLimiter
+    metrics: MetricsCollector
+    logger: Logger
+    users: List<User>
+    orders: List<Order>
+    products: List<Product>
 
-impl Application {
-    fn create_user(&mut self, ...) { /* touches db, email, search, metrics */ }
-    fn process_payment(&mut self, ...) { /* touches payment, db, email, metrics */ }
-    fn search_products(&self, ...) { /* touches search, cache, metrics */ }
-    fn generate_report(&self, ...) { /* touches db, email */ }
-    fn handle_webhook(&mut self, ...) { /* touches everything */ }
-    fn send_notification(&self, ...) { /* touches email, db */ }
-    fn update_inventory(&mut self, ...) { /* touches db, search, cache */ }
-    // ... 40 more methods
-}
+FUNCTION CREATE_USER(app: Application, ...)      // touches db, email, search, metrics
+FUNCTION PROCESS_PAYMENT(app: Application, ...)   // touches payment, db, email, metrics
+FUNCTION SEARCH_PRODUCTS(app: Application, ...)   // touches search, cache, metrics
+FUNCTION GENERATE_REPORT(app: Application, ...)   // touches db, email
+FUNCTION HANDLE_WEBHOOK(app: Application, ...)    // touches everything
+FUNCTION SEND_NOTIFICATION(app: Application, ...) // touches email, db
+FUNCTION UPDATE_INVENTORY(app: Application, ...)  // touches db, search, cache
+// ... 40 more methods
 ```
 
 ### How to Fix It
 
 Split along domain boundaries. Each service owns its data and dependencies:
 
-```rust
-struct UserService {
-    db: PgPool,
-    search: ElasticClient,
-    email: SmtpClient,
-}
+```text
+RECORD UserService
+    db: PgPool
+    search: ElasticClient
+    email: SmtpClient
 
-impl UserService {
-    fn create(&self, req: CreateUserRequest) -> Result<User, UserError> { /* ... */ }
-    fn find(&self, id: UserId) -> Result<User, UserError> { /* ... */ }
-    fn deactivate(&self, id: UserId) -> Result<(), UserError> { /* ... */ }
-}
+FUNCTION CREATE_USER(svc: UserService, req: CreateUserRequest) → Result<User, UserError>
+FUNCTION FIND_USER(svc: UserService, id: UserId) → Result<User, UserError>
+FUNCTION DEACTIVATE_USER(svc: UserService, id: UserId) → Result<Void, UserError>
 
-struct OrderService {
-    db: PgPool,
-    payment: StripeClient,
-    email: SmtpClient,
-}
+RECORD OrderService
+    db: PgPool
+    payment: StripeClient
+    email: SmtpClient
 
-impl OrderService {
-    fn place(&self, req: PlaceOrderRequest) -> Result<Order, OrderError> { /* ... */ }
-    fn cancel(&self, id: OrderId) -> Result<(), OrderError> { /* ... */ }
-}
+FUNCTION PLACE_ORDER(svc: OrderService, req: PlaceOrderRequest) → Result<Order, OrderError>
+FUNCTION CANCEL_ORDER(svc: OrderService, id: OrderId) → Result<Void, OrderError>
 
-struct ProductService {
-    db: PgPool,
-    search: ElasticClient,
-    cache: Cache,
-}
+RECORD ProductService
+    db: PgPool
+    search: ElasticClient
+    cache: Cache
 
-impl ProductService {
-    fn search(&self, query: &str) -> Result<Vec<Product>, SearchError> { /* ... */ }
-    fn update_stock(&self, id: ProductId, delta: i32) -> Result<(), StockError> { /* ... */ }
-}
+FUNCTION SEARCH_PRODUCTS(svc: ProductService, query: String) → Result<List<Product>, SearchError>
+FUNCTION UPDATE_STOCK(svc: ProductService, id: ProductId, delta: Integer) → Result<Void, StockError>
 ```
 
 Each service is testable in isolation, has a focused API, and changes to one domain do not ripple through others.
@@ -140,40 +128,32 @@ Rules:
 - Layer 1 (domain) has zero dependencies on infrastructure.
 - Shared behavior goes in the lowest appropriate layer.
 
-```rust
+```text
 // Layer 1: Domain -- pure types, no I/O
-mod domain {
-    pub struct UserId(pub u64);
-    pub struct User { pub id: UserId, pub name: String, pub email: String }
-    pub trait UserRepository: Send + Sync {
-        fn find(&self, id: UserId) -> Result<User, RepoError>;
-        fn save(&self, user: &User) -> Result<(), RepoError>;
-    }
-}
+MODULE domain
+    TYPE UserId = WRAPPER(Integer)
+    RECORD User { id: UserId, name: String, email: String }
+    INTERFACE UserRepository
+        FUNCTION FIND(id: UserId) → Result<User, RepoError>
+        FUNCTION SAVE(user: User) → Result<Void, RepoError>
 
 // Layer 2: Repository -- implements domain traits with real I/O
-mod repository {
-    use crate::domain::*;
-    pub struct PgUserRepository { pool: PgPool }
-    impl UserRepository for PgUserRepository { /* ... */ }
-}
+MODULE repository
+    USES domain
+    RECORD PgUserRepository { pool: PgPool }
+    IMPLEMENTS UserRepository FOR PgUserRepository
 
 // Layer 3: Service -- orchestrates domain logic
-mod service {
-    use crate::domain::*;
-    pub struct UserService<R: UserRepository> { repo: R }
-    impl<R: UserRepository> UserService<R> {
-        pub fn register(&self, name: &str, email: &str) -> Result<User, ServiceError> { /* ... */ }
-    }
-}
+MODULE service
+    USES domain
+    RECORD UserService<R: UserRepository> { repo: R }
+    FUNCTION REGISTER(svc: UserService, name: String, email: String) → Result<User, ServiceError>
 
 // Layer 4: Handler -- thin adapter between HTTP and service
-mod handler {
-    use crate::service::UserService;
-    pub async fn create_user(service: &UserService<impl UserRepository>, req: Request) -> Response {
+MODULE handler
+    USES service
+    ASYNC FUNCTION CREATE_USER(service: UserService, req: Request) → Response
         // parse request, call service, format response
-    }
-}
 ```
 
 ---
@@ -195,28 +175,25 @@ Dead code, unused abstractions, and deprecated modules that remain in the codeba
 
 ### Real Example
 
-```rust
-// This function was replaced by process_payment_v2 in 2023.
+```text
+// This function was replaced by PROCESS_PAYMENT_V2 in 2023.
 // Nobody has confirmed it is safe to delete.
 // It has 200 lines of complex logic.
-#[deprecated(note = "use process_payment_v2")]
-pub fn process_payment(order: &Order) -> Result<(), PaymentError> {
+[DEPRECATED: "use PROCESS_PAYMENT_V2"]
+FUNCTION PROCESS_PAYMENT(order: Order) → Result<Void, PaymentError>
     // ... 200 lines ...
-}
 
 // "Temporary" compatibility shim from the database migration.
 // Marked for removal in Q1 2024. It is now Q1 2026.
-pub fn legacy_user_lookup(id: u64) -> Option<User> {
+FUNCTION LEGACY_USER_LOOKUP(id: Integer) → Optional<User>
     // translates old user IDs to new UUIDs
     // nobody knows if this is still called
-}
 
 // Abstract factory for notification senders.
 // Only one implementation was ever written.
-// The trait exists "in case we add more later."
-trait NotificationSenderFactory {
-    fn create(&self, channel: &str) -> Box<dyn NotificationSender>;
-}
+// The interface exists "in case we add more later."
+INTERFACE NotificationSenderFactory
+    FUNCTION CREATE(channel: String) → NotificationSender
 ```
 
 ### How to Fix It
@@ -259,30 +236,26 @@ None of these need container orchestration. A cron entry, a static file host, a 
 
 ### In Rust Specifically
 
-```rust
+```text
 // Golden hammer: making everything generic when concrete types are fine
 
 // Over-engineered -- there will only ever be one Config type
-fn load_config<C: Config + DeserializeOwned + Default + Send + Sync + 'static>(
-    path: &str,
-) -> Result<C, ConfigError> {
+FUNCTION LOAD_CONFIG<C: Config + Deserializable + Default>(path: String) → Result<C, ConfigError>
     // ...
-}
 
 // Just use the concrete type
-fn load_config(path: &str) -> Result<AppConfig, ConfigError> {
+FUNCTION LOAD_CONFIG(path: String) → Result<AppConfig, ConfigError>
     // ...
-}
 ```
 
-```rust
-// Golden hammer: trait objects everywhere
+```text
+// Golden hammer: interface objects everywhere
 
 // Over-engineered -- there is only one logger implementation
-fn process_order(order: &Order, logger: &dyn Logger, mailer: &dyn Mailer) { /* ... */ }
+FUNCTION PROCESS_ORDER(order: Order, logger: Logger, mailer: Mailer)  // ...
 
 // The concrete types are fine until you actually need polymorphism
-fn process_order(order: &Order, logger: &ConsoleLogger, mailer: &SmtpMailer) { /* ... */ }
+FUNCTION PROCESS_ORDER(order: Order, logger: ConsoleLogger, mailer: SmtpMailer)  // ...
 ```
 
 ### How to Fix It
@@ -311,56 +284,45 @@ Adding layers of abstraction before complexity justifies them. Creating interfac
 
 ### Real Example
 
-```rust
+```text
 // Premature abstraction -- there is only one database and one storage backend
 
-trait StorageBackend: Send + Sync {
-    fn read(&self, key: &str) -> Result<Vec<u8>, StorageError>;
-    fn write(&self, key: &str, data: &[u8]) -> Result<(), StorageError>;
-    fn delete(&self, key: &str) -> Result<(), StorageError>;
-}
+INTERFACE StorageBackend
+    FUNCTION READ(key: String) → Result<Bytes, StorageError>
+    FUNCTION WRITE(key: String, data: Bytes) → Result<Void, StorageError>
+    FUNCTION DELETE(key: String) → Result<Void, StorageError>
 
-trait StorageBackendFactory {
-    fn create(&self) -> Box<dyn StorageBackend>;
-}
+INTERFACE StorageBackendFactory
+    FUNCTION CREATE() → StorageBackend
 
-struct FileStorageBackend { base_path: PathBuf }
-impl StorageBackend for FileStorageBackend { /* ... */ }
+RECORD FileStorageBackend { base_path: Path }
+IMPLEMENTS StorageBackend FOR FileStorageBackend
 
-struct FileStorageBackendFactory { base_path: PathBuf }
-impl StorageBackendFactory for FileStorageBackendFactory {
-    fn create(&self) -> Box<dyn StorageBackend> {
-        Box::new(FileStorageBackend { base_path: self.base_path.clone() })
-    }
-}
+RECORD FileStorageBackendFactory { base_path: Path }
+IMPLEMENTS StorageBackendFactory FOR FileStorageBackendFactory
+    FUNCTION CREATE() → StorageBackend
+        RETURN NEW FileStorageBackend { base_path ← self.base_path }
 
 // The "service" that uses all this machinery
-struct DocumentService {
-    storage: Box<dyn StorageBackend>,
-}
+RECORD DocumentService
+    storage: StorageBackend
 ```
 
 All of that could be:
 
-```rust
+```text
 // Direct implementation -- add abstraction when a second backend appears
-struct DocumentService {
-    base_path: PathBuf,
-}
+RECORD DocumentService
+    base_path: Path
 
-impl DocumentService {
-    fn read(&self, key: &str) -> Result<Vec<u8>, io::Error> {
-        std::fs::read(self.base_path.join(key))
-    }
+FUNCTION READ(svc: DocumentService, key: String) → Result<Bytes, IOError>
+    RETURN FILE_READ(svc.base_path + "/" + key)
 
-    fn write(&self, key: &str, data: &[u8]) -> Result<(), io::Error> {
-        std::fs::write(self.base_path.join(key), data)
-    }
+FUNCTION WRITE(svc: DocumentService, key: String, data: Bytes) → Result<Void, IOError>
+    FILE_WRITE(svc.base_path + "/" + key, data)
 
-    fn delete(&self, key: &str) -> Result<(), io::Error> {
-        std::fs::remove_file(self.base_path.join(key))
-    }
-}
+FUNCTION DELETE(svc: DocumentService, key: String) → Result<Void, IOError>
+    FILE_REMOVE(svc.base_path + "/" + key)
 ```
 
 When a second storage backend is actually needed (not hypothetically), then extract the trait. At that point you have two concrete examples to inform the trait design, which produces a better abstraction than guessing up front.

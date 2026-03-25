@@ -59,54 +59,43 @@ Git history is a DAG, not a linear list. Each commit points to its parent(s). Me
 
 You can interact with Git repositories directly from Rust using the [`git2`](https://crates.io/crates/git2) crate (bindings to libgit2). This is useful for building custom tooling, dashboards, or CI integrations.
 
-```rust
-// Cargo.toml dependency: git2 = "0.19"
+```text
+// Dependency: git2 library
 
-use git2::Repository;
-
-fn main() -> Result<(), git2::Error> {
+FUNCTION MAIN() → Ok or Error
     // Open the repository in the current directory
-    let repo = Repository::open(".")?;
+    repo ← REPOSITORY_OPEN(".")
 
     // --- Check current branch ---
-    let head = repo.head()?;
-    let branch_name = head.shorthand().unwrap_or("(detached)");
-    println!("Current branch: {branch_name}");
+    head ← repo.HEAD()
+    branch_name ← head.SHORTHAND() or "(detached)"
+    PRINT "Current branch: " + branch_name
 
     // --- Check for uncommitted changes ---
-    let statuses = repo.statuses(None)?;
-    let dirty_count = statuses
-        .iter()
-        .filter(|s| s.status() != git2::Status::CURRENT)
-        .count();
-    if dirty_count > 0 {
-        println!("Working tree has {dirty_count} uncommitted change(s)");
-    } else {
-        println!("Working tree is clean");
-    }
+    statuses ← repo.STATUSES()
+    dirty_count ← COUNT entries in statuses WHERE status ≠ CURRENT
+    IF dirty_count > 0
+        PRINT "Working tree has " + dirty_count + " uncommitted change(s)"
+    ELSE
+        PRINT "Working tree is clean"
 
     // --- List the 5 most recent commits ---
-    let mut revwalk = repo.revwalk()?;
-    revwalk.push_head()?;
-    revwalk.set_sorting(git2::Sort::TIME)?;
+    revwalk ← repo.REVWALK()
+    revwalk.PUSH_HEAD()
+    revwalk.SET_SORTING(TIME)
 
-    println!("\nRecent commits:");
-    for (i, oid) in revwalk.enumerate() {
-        if i >= 5 {
-            break;
-        }
-        let oid = oid?;
-        let commit = repo.find_commit(oid)?;
-        let summary = commit.summary().unwrap_or("(no message)");
-        let author = commit.author();
-        let name = author.name().unwrap_or("unknown");
+    PRINT "Recent commits:"
+    FOR i, oid IN ENUMERATE(revwalk)
+        IF i ≥ 5
+            BREAK
+        commit ← repo.FIND_COMMIT(oid)
+        summary ← commit.SUMMARY() or "(no message)"
+        name ← commit.AUTHOR().NAME() or "unknown"
         // Short hash: first 7 characters of the SHA
-        let short_hash = &oid.to_string()[..7];
-        println!("  {short_hash} — {name}: {summary}");
-    }
+        short_hash ← oid.TO_STRING()[0..7]
+        PRINT "  " + short_hash + " — " + name + ": " + summary
 
-    Ok(())
-}
+    RETURN Ok
 ```
 
 This gives you the building blocks for tasks like enforcing branch naming conventions in CI, generating changelogs, or building status dashboards — all without shelling out to the `git` CLI.

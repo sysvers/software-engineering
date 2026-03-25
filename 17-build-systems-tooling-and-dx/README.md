@@ -73,16 +73,14 @@ mysql = ["sqlx/mysql"]
 telemetry = ["opentelemetry", "tracing-opentelemetry"]
 ```
 
-```rust
-#[cfg(feature = "telemetry")]
-fn init_tracing() {
-    // OpenTelemetry setup
-}
+```text
+IF FEATURE "telemetry" IS enabled THEN
+    PROCEDURE INIT_TRACING():
+        // OpenTelemetry setup
 
-#[cfg(not(feature = "telemetry"))]
-fn init_tracing() {
-    // Simple stdout logging
-}
+ELSE
+    PROCEDURE INIT_TRACING():
+        // Simple stdout logging
 ```
 
 ```bash
