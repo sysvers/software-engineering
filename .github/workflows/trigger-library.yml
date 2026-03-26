@@ -1,0 +1,16 @@
+name: Trigger Library Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger library rebuild
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.LIBRARY_DISPATCH_TOKEN }}
+          repository: sysvers/library
+          event-type: content-updated
