@@ -1,0 +1,10 @@
+{
+  "difficulty": "intermediate",
+  "tags": [
+    "data",
+    "pipelines"
+  ],
+  "prerequisites": [
+    "database-engineering"
+  ]
+}

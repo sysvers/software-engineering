@@ -1,0 +1,10 @@
+{
+  "difficulty": "intermediate",
+  "tags": [
+    "security",
+    "infrastructure"
+  ],
+  "prerequisites": [
+    "application-security"
+  ]
+}

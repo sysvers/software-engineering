@@ -1,0 +1,10 @@
+{
+  "difficulty": "intermediate",
+  "tags": [
+    "devops",
+    "automation"
+  ],
+  "prerequisites": [
+    "version-control-and-collaboration"
+  ]
+}

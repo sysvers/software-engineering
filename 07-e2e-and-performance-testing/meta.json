@@ -1,0 +1,10 @@
+{
+  "difficulty": "intermediate",
+  "tags": [
+    "testing",
+    "quality"
+  ],
+  "prerequisites": [
+    "unit-and-integration-testing"
+  ]
+}

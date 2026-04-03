@@ -1,0 +1,11 @@
+{
+  "difficulty": "advanced",
+  "tags": [
+    "architecture",
+    "interviews"
+  ],
+  "prerequisites": [
+    "software-architecture",
+    "database-engineering"
+  ]
+}

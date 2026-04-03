@@ -1,0 +1,10 @@
+{
+  "difficulty": "beginner",
+  "tags": [
+    "testing",
+    "quality"
+  ],
+  "prerequisites": [
+    "clean-code-and-software-craftsmanship"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "difficulty": "intermediate",
+  "tags": [
+    "patterns",
+    "architecture"
+  ],
+  "prerequisites": [
+    "clean-code-and-software-craftsmanship"
+  ]
+}

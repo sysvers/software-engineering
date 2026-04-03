@@ -1,0 +1,11 @@
+{
+  "difficulty": "advanced",
+  "tags": [
+    "sre",
+    "operations"
+  ],
+  "prerequisites": [
+    "observability-and-monitoring",
+    "cicd-and-deployment"
+  ]
+}

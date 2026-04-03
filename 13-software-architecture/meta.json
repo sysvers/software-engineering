@@ -1,0 +1,11 @@
+{
+  "difficulty": "intermediate",
+  "tags": [
+    "architecture",
+    "design"
+  ],
+  "prerequisites": [
+    "design-patterns",
+    "low-level-system-design"
+  ]
+}

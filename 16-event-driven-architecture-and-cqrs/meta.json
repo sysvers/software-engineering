@@ -1,0 +1,10 @@
+{
+  "difficulty": "advanced",
+  "tags": [
+    "architecture",
+    "patterns"
+  ],
+  "prerequisites": [
+    "software-architecture"
+  ]
+}
