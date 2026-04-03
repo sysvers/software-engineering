@@ -1,0 +1,67 @@
+flowchart TD
+    SE[Staff Engineer]
+
+    SE --> TL[Tech Lead]
+    SE --> AR[Architect]
+    SE --> SO[Solver]
+    SE --> RH[Right Hand]
+
+    subgraph sg_tl [Tech Lead Focus]
+        TL --> TL1[Guide a single team]
+        TL --> TL2[Set technical direction]
+        TL --> TL3[Unblock engineers daily]
+        TL --> TL4[Partner closely<br/>with manager]
+    end
+
+    subgraph sg_ar [Architect Focus]
+        AR --> AR1[Own cross-team<br/>technical vision]
+        AR --> AR2[Define system boundaries]
+        AR --> AR3[Drive alignment<br/>across orgs]
+        AR --> AR4[Ensure long-term<br/>system health]
+    end
+
+    subgraph sg_so [Solver Focus]
+        SO --> SO1[Tackle hardest<br/>open problems]
+        SO --> SO2[Deep domain expertise]
+        SO --> SO3[Move between teams<br/>as needed]
+        SO --> SO4[Deliver under<br/>ambiguity]
+    end
+
+    subgraph sg_rh [Right Hand Focus]
+        RH --> RH1[Extend executive<br/>leadership reach]
+        RH --> RH2[Drive org-wide<br/>initiatives]
+        RH --> RH3[Handle special<br/>projects]
+        RH --> RH4[Bridge strategy<br/>and execution]
+    end
+
+    %% Styles
+    style SE fill:#2d3436,color:#fff,stroke:#636e72,stroke-width:2px
+    style TL fill:#0984e3,color:#fff,stroke:#74b9ff,stroke-width:2px
+    style AR fill:#6c5ce7,color:#fff,stroke:#a29bfe,stroke-width:2px
+    style SO fill:#e17055,color:#fff,stroke:#fab1a0,stroke-width:2px
+    style RH fill:#00b894,color:#fff,stroke:#55efc4,stroke-width:2px
+
+    style TL1 fill:#dfe6e9,stroke:#0984e3
+    style TL2 fill:#dfe6e9,stroke:#0984e3
+    style TL3 fill:#dfe6e9,stroke:#0984e3
+    style TL4 fill:#dfe6e9,stroke:#0984e3
+
+    style AR1 fill:#dfe6e9,stroke:#6c5ce7
+    style AR2 fill:#dfe6e9,stroke:#6c5ce7
+    style AR3 fill:#dfe6e9,stroke:#6c5ce7
+    style AR4 fill:#dfe6e9,stroke:#6c5ce7
+
+    style SO1 fill:#dfe6e9,stroke:#e17055
+    style SO2 fill:#dfe6e9,stroke:#e17055
+    style SO3 fill:#dfe6e9,stroke:#e17055
+    style SO4 fill:#dfe6e9,stroke:#e17055
+
+    style RH1 fill:#dfe6e9,stroke:#00b894
+    style RH2 fill:#dfe6e9,stroke:#00b894
+    style RH3 fill:#dfe6e9,stroke:#00b894
+    style RH4 fill:#dfe6e9,stroke:#00b894
+
+    style sg_tl fill:none,stroke:#0984e3,stroke-width:1px,stroke-dasharray:5
+    style sg_ar fill:none,stroke:#6c5ce7,stroke-width:1px,stroke-dasharray:5
+    style sg_so fill:none,stroke:#e17055,stroke-width:1px,stroke-dasharray:5
+    style sg_rh fill:none,stroke:#00b894,stroke-width:1px,stroke-dasharray:5

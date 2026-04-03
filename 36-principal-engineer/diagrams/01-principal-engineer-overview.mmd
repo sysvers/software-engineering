@@ -1,0 +1,52 @@
+flowchart TD
+    PE[Principal Engineer]
+
+    PE --> TS[Technical Strategy]
+    PE --> SC[Standards and Consistency]
+    PE --> TR[Technical Risk<br/>Management]
+
+    subgraph sg_ts [Technical Strategy]
+        TS --> TS1[Define multi-year<br/>technical roadmap]
+        TS --> TS2[Align engineering<br/>with business goals]
+        TS --> TS3[Evaluate build vs<br/>buy decisions]
+        TS --> TS4[Drive architecture<br/>evolution]
+    end
+
+    subgraph sg_sc [Standards and Consistency]
+        SC --> SC1[Establish engineering<br/>best practices]
+        SC --> SC2[Review critical<br/>design proposals]
+        SC --> SC3[Mentor staff and<br/>senior engineers]
+        SC --> SC4[Ensure cross-team<br/>code quality]
+    end
+
+    subgraph sg_tr [Technical Risk Management]
+        TR --> TR1[Identify systemic<br/>technical debt]
+        TR --> TR2[Assess platform<br/>scalability gaps]
+        TR --> TR3[Plan disaster<br/>recovery strategy]
+        TR --> TR4[Own incident<br/>post-mortem process]
+    end
+
+    %% Styles
+    style PE fill:#2d3436,color:#fff,stroke:#636e72,stroke-width:2px
+    style TS fill:#0984e3,color:#fff,stroke:#74b9ff,stroke-width:2px
+    style SC fill:#6c5ce7,color:#fff,stroke:#a29bfe,stroke-width:2px
+    style TR fill:#d63031,color:#fff,stroke:#ff7675,stroke-width:2px
+
+    style TS1 fill:#dfe6e9,stroke:#0984e3
+    style TS2 fill:#dfe6e9,stroke:#0984e3
+    style TS3 fill:#dfe6e9,stroke:#0984e3
+    style TS4 fill:#dfe6e9,stroke:#0984e3
+
+    style SC1 fill:#dfe6e9,stroke:#6c5ce7
+    style SC2 fill:#dfe6e9,stroke:#6c5ce7
+    style SC3 fill:#dfe6e9,stroke:#6c5ce7
+    style SC4 fill:#dfe6e9,stroke:#6c5ce7
+
+    style TR1 fill:#dfe6e9,stroke:#d63031
+    style TR2 fill:#dfe6e9,stroke:#d63031
+    style TR3 fill:#dfe6e9,stroke:#d63031
+    style TR4 fill:#dfe6e9,stroke:#d63031
+
+    style sg_ts fill:none,stroke:#0984e3,stroke-width:1px,stroke-dasharray:5
+    style sg_sc fill:none,stroke:#6c5ce7,stroke-width:1px,stroke-dasharray:5
+    style sg_tr fill:none,stroke:#d63031,stroke-width:1px,stroke-dasharray:5
