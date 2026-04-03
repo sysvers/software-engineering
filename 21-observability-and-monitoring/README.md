@@ -189,7 +189,7 @@ Grafana reads from Prometheus (and dozens of other data sources) to build dashbo
 
 Example PromQL queries for Grafana panels:
 
-```promql
+```text
 # Request rate (per second, 5-minute window)
 rate(http_requests_total[5m])
 
